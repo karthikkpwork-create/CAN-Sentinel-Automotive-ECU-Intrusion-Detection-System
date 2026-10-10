@@ -1,0 +1,2 @@
+# Week 1 uses only the Python standard library (socket.AF_CAN, csv, json, logging, argparse).
+# No third-party packages are required. Later weeks will add scikit-learn / pandas / PyQt here.
