@@ -39,6 +39,16 @@ OBSERVED_COLUMNS: List[str] = [
     "source",              # observed:<interface> (<monitor implementation>)
 ]
 
+ATTACK_SENDER_COLUMNS: List[str] = SENDER_COLUMNS + [
+    "label",          # 0 = normal, 1 = anomalous / attack
+    "attack_type",    # normal | injection | unknown_id | payload_tampering | missing_message
+]
+
+LABELLED_OBSERVED_COLUMNS: List[str] = OBSERVED_COLUMNS + [
+    "label",          # 0 = normal, 1 = anomalous / attack
+    "attack_type",    # normal | injection | unknown_id | payload_tampering | missing_message
+]
+
 
 class CsvSink:
     """Append rows to a CSV file, writing the header once. Safe to close twice."""
