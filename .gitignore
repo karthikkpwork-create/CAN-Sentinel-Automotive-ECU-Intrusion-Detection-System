@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.venv/
+day1_dir.py
+make_day1.py
