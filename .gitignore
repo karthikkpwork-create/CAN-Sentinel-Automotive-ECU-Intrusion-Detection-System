@@ -1,3 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+day1_dir.py
+make_day1.py
 # Python
 __pycache__/
 *.py[cod]
