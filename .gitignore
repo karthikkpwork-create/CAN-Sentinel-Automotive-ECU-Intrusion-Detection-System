@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Helper and setup scripts
+day1_dir.py
+make_day1.py
+
+
+# Built binaries
+bin/
+
+# Personal config (config.example.json IS tracked)
+config/config.json
+
+# Generated data, logs and results (folders kept via .gitkeep; samples are tracked)
+data/generated/*
+!data/generated/.gitkeep
+logs/*
+!logs/.gitkeep
+results/*
+!results/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
