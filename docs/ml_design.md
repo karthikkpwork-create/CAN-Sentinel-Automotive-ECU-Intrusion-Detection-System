@@ -106,3 +106,13 @@ unavailable, so capture timing and ECU-to-ID mappings remain unverified.
 | Suitable for training? | No for the planned normal-only model training; this is a small synthetic mixed-traffic sample |
 | Suitable for evaluation? | Pending for final evaluation; it can support preliminary checks, but is not independently captured test data |
 | Outstanding issues | The observed-normal CSV, capture code, and configuration files were unavailable. Verify decimal/hex CAN ID agreement and DLC/payload-length agreement before feature extraction. |
+
+### Feature extraction checks
+
+- Input: `data/samples/sample_attack_dry_run_seed42.csv` (synthetic dry-run sample).
+- Valid frames read: 446; skipped: 0.
+- Feature output: 10 one-second windows with 8 columns.
+- Empty cells: 0; non-finite numeric values: 0.
+- Repeatability: two runs produced the same SHA-256 hash: `A217DF62407AA5FFB366E59936223C49C3C391896AC8741274A01B189AF5EC1B`.
+- Limitation: `data/generated/observed_normal_traffic.csv` was unavailable, so real-capture processing has not been verified.
+- Input-validation limitation: the current extractor skips rows with missing or invalid timestamps or CAN IDs and reports the skipped count. Failing with an error for such rows remains to be implemented and checked.
