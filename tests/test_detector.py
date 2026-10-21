@@ -1,4 +1,4 @@
-"""Tests for src/detector/detector.py and scripts/run_demo.sh (Person A).
+"""Tests for src/detector/detector.py and scripts/run_pipeline_demo.sh (Person A).
 
 No CAN hardware, vcan0 or dashboard is needed. Integration tests use the
 repo's own dry-run simulator with fixed seeds and write only to temp folders.
@@ -22,7 +22,7 @@ from sklearn.ensemble import IsolationForest
 from src.detector import detector as det
 
 ROOT = Path(__file__).resolve().parent.parent
-RUN_DEMO = ROOT / "scripts" / "run_demo.sh"
+RUN_DEMO = ROOT / "scripts" / "run_pipeline_demo.sh"
 
 
 def normal_features(n=60, seed=0):
@@ -356,7 +356,7 @@ class RunDemoScriptTests(unittest.TestCase):
         res = self.run_script("offline", python=self.fake_python("exit 1"))
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("python3 -m venv", res.stderr)
-        self.assertIn("pip install -r requirements.txt", res.stderr)
+        self.assertIn("pip install -r requirements-detector.txt", res.stderr)
 
     def test_failed_step_fails_the_script(self):
         py = self.fake_python('if [ "$1" = "-c" ]; then exit 0; fi\necho boom >&2\nexit 3')

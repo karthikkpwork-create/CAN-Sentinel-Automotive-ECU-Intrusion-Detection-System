@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # CAN-Sentinel demo runner (owner: Person A).
 #
-#   scripts/run_demo.sh [seconds]          Week 1 live demo on vcan0 (normal traffic)
-#   scripts/run_demo.sh offline [options]  full pipeline WITHOUT vcan0:
+#   scripts/run_pipeline_demo.sh [seconds]          Week 1 live demo on vcan0 (normal traffic)
+#   scripts/run_pipeline_demo.sh offline [options]  full pipeline WITHOUT vcan0:
 #                                          simulate -> extract features -> train -> detect
-#   scripts/run_demo.sh --help
+#   scripts/run_pipeline_demo.sh --help
 #
 # Offline options:
 #   --duration N   seconds of simulated traffic per dataset (default 60)
@@ -66,7 +66,7 @@ ERROR: pandas, scikit-learn and joblib are required for the detector.
 Create a virtual environment once, then install the dependencies:
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install -r requirements.txt
+    pip install -r requirements-detector.txt
 Then run this script again (the venv's python is used when it is activated).
 EOF
     exit 1
