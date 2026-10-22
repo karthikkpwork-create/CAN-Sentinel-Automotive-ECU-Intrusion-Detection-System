@@ -1,8 +1,10 @@
 """widgets.py - small reusable pieces (PyQt5)."""
-from PyQt5.QtCore import Qt
+from collections import deque
+
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QVBoxLayout
-
+import pyqtgraph as pg
 
 class StatCard(QFrame):
     """A small card with a title and a big number."""
@@ -55,3 +57,50 @@ class StatusPill(QLabel):
             f"background-color: {color}; color: white; font-weight: 600;"
             "border-radius: 12px; padding: 4px 14px;"
         )
+
+
+class MessageRateChart(pg.PlotWidget):
+    """Live line chart of CAN messages per second (last N seconds)"""
+
+    def __init__(self, window_seconds=60, dark=True, parent=None):
+        super().__init__(parent)
+        self.window_seconds = window_seconds
+        self.rates = deque([0] * window_seconds, maxlen=window_seconds)
+        self.x = list(range(-window_seconds + 1, 1))  # X-axis values for the last N seconds
+        self._count = 0
+
+        self.setLabel("left", "Messages per second")
+        self.setLabel("bottom", "seconds ago")
+        self.showGrid(x=True, y=True, alpha=0.2)
+        self.setMouseEnabled(x=False, y=False)
+        self.setMenuEnabled(False)
+        self.setYRange(0, 10)
+        self.curve = self.plot(
+            self.x, list(self.rates),
+            pen=pg.mkPen("#3b82f6", width=2),
+            fillLevel=0, brush=(59, 130, 246, 50),
+        )
+        self.set_dark(dark)
+
+        # every 1 second: store the count and redraw
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(1000)
+
+    def record(self, n=1):
+        """Call this once for every frame (or record(len(batch)) for a batch)."""
+        self._count += n
+
+    def _tick(self):
+        self.rates.append(self._count)
+        self._count = 0
+        self.curve.setData(self.x, list(self.rates))
+        self.enableAutoRange(axis="y")
+
+    def set_dark(self, dark):
+        self.setBackground("#1e1e1e" if dark else "#ffffff")
+        axis_color = "#cccccc" if dark else "#333333"
+        for name in ("left", "bottom"):
+            ax = self.getAxis(name)
+            ax.setPen(axis_color)
+            ax.setTextPen(axis_color)

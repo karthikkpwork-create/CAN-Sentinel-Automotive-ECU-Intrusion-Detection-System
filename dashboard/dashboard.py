@@ -13,9 +13,9 @@ from PyQt5.QtWidgets import (
 )
 import pyqtgraph as pg          # keep this import AFTER the PyQt5 imports
 
+from widgets import MessageRateChart, StatCard, StatusPill
 from theme import apply_theme, saved_dark_mode   # functions from your theme.py
 from style import extra_qss, get_colors          # extra look, works on top of theme.py
-from widgets import StatCard, StatusPill
 
 ALERT_COLUMNS = ["Time", "ID", "Type", "Score"]
 
@@ -150,6 +150,10 @@ class Dashboard(QMainWindow):
         self.frame_model = CsvTableModel()
         self.alert_model = AlertTableModel()
         self.dark = saved_dark_mode()                 # last mode used
+        self.rate_chart = MessageRateChart(
+            window_seconds=60,
+            dark=self.dark,
+        )
 
         # ---- top bar: title, status, buttons ----
         title = QLabel("Infotact Solutions CAN-Sentinel")
@@ -224,12 +228,18 @@ class Dashboard(QMainWindow):
         cl.addWidget(self.plot)
         chart_box.setLayout(cl)
 
+        rate_box = QGroupBox("Message rate")
+        rate_layout = QVBoxLayout()
+        rate_layout.addWidget(self.rate_chart)
+        rate_box.setLayout(rate_layout)
+
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(8)
         rl.addWidget(alerts_box, 3)
         rl.addWidget(chart_box, 2)
+        rl.addWidget(rate_box, 2)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(frames_box)
@@ -260,6 +270,7 @@ class Dashboard(QMainWindow):
     def set_theme(self, dark):
         self.dark = dark
         apply_theme(dark)                             # your theme.py
+        self.rate_chart.set_dark(dark)
         self.setStyleSheet(extra_qss(dark))           # extra look on top
         self.theme_button.setText("Light mode" if dark else "Dark mode")
 
@@ -328,6 +339,7 @@ class Dashboard(QMainWindow):
     def load_frames(self, path):
         try:
             self.frame_model.load_csv(path)
+            self.rate_chart.record(self.frame_model.rowCount())
             self.status.setText(f"{path}  |  {self.frame_model.rowCount()} frames")
         except Exception as e:
             self.status.setText(f"Could not load file: {e}")
