@@ -3,7 +3,8 @@ import random
 import sys
 import time
 from collections import Counter
-
+from bridge_client import BridgeClient
+from widgets import MessageRateChart, StatCard, StatusPill
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
@@ -13,11 +14,12 @@ from PyQt5.QtWidgets import (
 )
 import pyqtgraph as pg          # keep this import AFTER the PyQt5 imports
 
-from widgets import MessageRateChart, StatCard, StatusPill
 from theme import apply_theme, saved_dark_mode   # functions from your theme.py
 from style import extra_qss, get_colors          # extra look, works on top of theme.py
 
 ALERT_COLUMNS = ["Time", "ID", "Type", "Score"]
+LIVE_COLUMNS = ["timestamp", "can_id", "dlc", "data", "extended"]
+MAX_LIVE_ROWS = 5000        # live table keeps only the newest rows
 
 NORMAL_VALUES = ("", "0", "normal", "benign", "none", "r", "false")
 SUSPICIOUS_VALUES = ("suspicious", "warning", "warn")
@@ -47,7 +49,7 @@ def read_csv(path):
 
 
 class CsvTableModel(QAbstractTableModel):
-    """Table of frames loaded from a CSV file.
+    """Table of frames loaded from a CSV file, or received live.
     If the file has a label column, attack rows are colored."""
 
     def __init__(self):
@@ -55,6 +57,7 @@ class CsvTableModel(QAbstractTableModel):
         self.header = []
         self.rows = []
         self.label_col = None
+        self.total = 0              # frames loaded or received so far
 
     def rowCount(self, parent=None):
         return len(self.rows)
@@ -97,7 +100,29 @@ class CsvTableModel(QAbstractTableModel):
         self.header = header
         self.rows = rows
         self.label_col = label_col
+        self.total = len(rows)
         self.endResetModel()
+
+    # ---------- live mode ----------
+    def start_live(self):
+        """Clear the table and switch to the live columns."""
+        self.beginResetModel()
+        self.header = LIVE_COLUMNS
+        self.rows = []
+        self.label_col = None
+        self.total = 0
+        self.endResetModel()
+
+    def add_frame(self, row):
+        n = len(self.rows)
+        self.beginInsertRows(QModelIndex(), n, n)
+        self.rows.append(row)
+        self.endInsertRows()
+        self.total += 1
+        if len(self.rows) > MAX_LIVE_ROWS:
+            self.beginRemoveRows(QModelIndex(), 0, 0)
+            del self.rows[0]
+            self.endRemoveRows()
 
 
 class AlertTableModel(QAbstractTableModel):
@@ -150,10 +175,7 @@ class Dashboard(QMainWindow):
         self.frame_model = CsvTableModel()
         self.alert_model = AlertTableModel()
         self.dark = saved_dark_mode()                 # last mode used
-        self.rate_chart = MessageRateChart(
-            window_seconds=60,
-            dark=self.dark,
-        )
+        self.client = None                            # live bridge thread
 
         # ---- top bar: title, status, buttons ----
         title = QLabel("Infotact Solutions CAN-Sentinel")
@@ -165,6 +187,8 @@ class Dashboard(QMainWindow):
         btn_frames.clicked.connect(self.choose_frames_file)
         btn_alerts = QPushButton("Open alerts CSV...")
         btn_alerts.clicked.connect(self.choose_alerts_file)
+        self.btn_live = QPushButton("Start live")
+        self.btn_live.clicked.connect(self.toggle_live)
         btn_test = QPushButton("Add test alert")
         btn_test.clicked.connect(self.add_test_alert)
         btn_clear = QPushButton("Clear alerts")
@@ -177,7 +201,8 @@ class Dashboard(QMainWindow):
         top.addWidget(title)
         top.addWidget(self.status_pill)
         top.addStretch()
-        for b in (btn_frames, btn_alerts, btn_test, btn_clear, self.theme_button):
+        for b in (btn_frames, btn_alerts, self.btn_live, btn_test,
+                  btn_clear, self.theme_button):
             top.addWidget(b)
 
         # ---- counter cards ----
@@ -189,6 +214,11 @@ class Dashboard(QMainWindow):
         cards.setSpacing(12)
         for c in (self.card_frames, self.card_alerts, self.card_type, self.card_score):
             cards.addWidget(c)
+
+        # ---- message rate chart (under the cards) ----
+        self.rate_chart = MessageRateChart(window_seconds=60, dark=saved_dark_mode())
+        self.rate_chart.setMinimumHeight(140)
+        self.rate_chart.setMaximumHeight(200)
 
         # ---- left: frame table ----
         self.frame_view = QTableView()
@@ -222,16 +252,11 @@ class Dashboard(QMainWindow):
         self.plot.setMenuEnabled(False)
         self.plot.setMouseEnabled(False, False)
         self.plot.hideButtons()
-        
+
         chart_box = QGroupBox("Alerts by type")
         cl = QVBoxLayout()
         cl.addWidget(self.plot)
         chart_box.setLayout(cl)
-
-        rate_box = QGroupBox("Message rate")
-        rate_layout = QVBoxLayout()
-        rate_layout.addWidget(self.rate_chart)
-        rate_box.setLayout(rate_layout)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -239,7 +264,6 @@ class Dashboard(QMainWindow):
         rl.setSpacing(8)
         rl.addWidget(alerts_box, 3)
         rl.addWidget(chart_box, 2)
-        rl.addWidget(rate_box, 2)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(frames_box)
@@ -255,6 +279,7 @@ class Dashboard(QMainWindow):
         layout.setSpacing(12)
         layout.addLayout(top)
         layout.addLayout(cards)
+        layout.addWidget(self.rate_chart)
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status)
         container = QWidget()
@@ -270,9 +295,9 @@ class Dashboard(QMainWindow):
     def set_theme(self, dark):
         self.dark = dark
         apply_theme(dark)                             # your theme.py
-        self.rate_chart.set_dark(dark)
         self.setStyleSheet(extra_qss(dark))           # extra look on top
         self.theme_button.setText("Light mode" if dark else "Dark mode")
+        self.rate_chart.set_dark(dark)
 
         c = get_colors(dark)
         self.card_frames.set_accent(c["accent"])
@@ -296,7 +321,7 @@ class Dashboard(QMainWindow):
         rows = self.alert_model.rows
         n_alerts = len(rows)
 
-        self.card_frames.set_value(self.frame_model.rowCount())
+        self.card_frames.set_value(self.frame_model.total)
         self.card_alerts.set_value(n_alerts)
         self.card_type.set_value(rows[-1][2] if rows else "None")
 
@@ -334,16 +359,66 @@ class Dashboard(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open frames CSV", "", "CSV files (*.csv)")
         if path:
+            self.stop_live()
             self.load_frames(path)
 
     def load_frames(self, path):
         try:
             self.frame_model.load_csv(path)
-            self.rate_chart.record(self.frame_model.rowCount())
             self.status.setText(f"{path}  |  {self.frame_model.rowCount()} frames")
         except Exception as e:
             self.status.setText(f"Could not load file: {e}")
         self.update_counters()
+
+    # ---------- live mode (vcan0 bridge) ----------
+    def toggle_live(self):
+        if self.client is None:
+            self.start_live()
+        else:
+            self.stop_live()
+
+    def start_live(self):
+        self.frame_model.start_live()
+        self.card_frames.set_value(0)
+        self.client = BridgeClient()
+        self.client.frame_received.connect(self.on_live_frame)
+        self.client.status_changed.connect(self.on_bridge_status)
+        self.client.start()
+        self.btn_live.setText("Stop live")
+
+    def stop_live(self):
+        if self.client is None:
+            return
+        self.client.stop()
+        self.client = None
+        self.btn_live.setText("Start live")
+        self.status.setText("Live stopped")
+
+    def on_bridge_status(self, text):
+        self.status.setText(f"Live: {text}")
+
+    def on_live_frame(self, f):
+        row = [
+            f"{float(f.get('timestamp', 0)):.3f}",
+            str(f.get("can_id", "")),
+            str(f.get("dlc", "")),
+            str(f.get("data", "")),
+            str(f.get("extended", "")),
+        ]
+        self.frame_model.add_frame(row)
+        self.frame_view.scrollToBottom()
+        self.card_frames.set_value(self.frame_model.total)
+        self.rate_chart.record()
+        print("chart count:", self.rate_chart._count)
+
+    def feed_rate_chart(self):
+            """Tell the message rate chart that one frame arrived."""
+            self.rate_chart.record()
+            print("chart count:", self.rate_chart._count)
+
+    def closeEvent(self, event):
+        self.stop_live()
+        super().closeEvent(event)
 
     # ---------- alert panel ----------
     def add_alert(self, when, can_id, attack_type, score, refresh=True):
@@ -414,6 +489,7 @@ class Dashboard(QMainWindow):
             f"{path} | loaded {added} alerts "
             f"({len(rows) - added} normal rows skipped)"
         )
+
     def add_test_alert(self):
         """For testing only. Remove when the real detector is connected."""
         kinds = ["injection", "unknown ID", "payload tampering", "missing message"]
