@@ -4,7 +4,6 @@ import sys
 import time
 from collections import Counter
 from bridge_client import BridgeClient
-from csv_export import FrameRecorder
 from widgets import MessageRateChart, StatCard, StatusPill
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
@@ -14,9 +13,12 @@ from PyQt5.QtWidgets import (
     QSplitter, QGroupBox,
 )
 import pyqtgraph as pg          # keep this import AFTER the PyQt5 imports
+from PyQt5.QtCore import QTimer
+from detector import RuleDetector
 
 from theme import apply_theme, saved_dark_mode   # functions from your theme.py
 from style import extra_qss, get_colors          # extra look, works on top of theme.py
+
 ALERT_COLUMNS = ["Time", "ID", "Type", "Score"]
 LIVE_COLUMNS = ["timestamp", "can_id", "dlc", "data", "extended"]
 MAX_LIVE_ROWS = 5000        # live table keeps only the newest rows
@@ -175,8 +177,13 @@ class Dashboard(QMainWindow):
         self.frame_model = CsvTableModel()
         self.alert_model = AlertTableModel()
         self.dark = saved_dark_mode()                 # last mode used
-        self.client = None
-        self.recorder = FrameRecorder()
+        self.client = None                            # live bridge thread
+        self.detector = RuleDetector()
+
+        self.missing_timer = QTimer(self)
+        self.missing_timer.timeout.connect(self.check_missing)
+        self.missing_timer.start(1000)
+
 
         # ---- top bar: title, status, buttons ----
         title = QLabel("Infotact Solutions CAN-Sentinel")
@@ -190,8 +197,8 @@ class Dashboard(QMainWindow):
         btn_alerts.clicked.connect(self.choose_alerts_file)
         self.btn_live = QPushButton("Start live")
         self.btn_live.clicked.connect(self.toggle_live)
-        self.btn_save = QPushButton("Save live CSV")
-        self.btn_save.clicked.connect(self.save_live_csv)
+        self.btn_detect = QPushButton("Detector: Off")
+        self.btn_detect.clicked.connect(self.toggle_detector)
         btn_test = QPushButton("Add test alert")
         btn_test.clicked.connect(self.add_test_alert)
         btn_clear = QPushButton("Clear alerts")
@@ -204,8 +211,8 @@ class Dashboard(QMainWindow):
         top.addWidget(title)
         top.addWidget(self.status_pill)
         top.addStretch()
-        for b in (btn_frames, btn_alerts, self.btn_live, self.btn_save,
-                  btn_test, btn_clear, self.theme_button):
+        for b in (btn_frames, btn_alerts, self.btn_live, btn_test,
+                  btn_clear, self.theme_button):
             top.addWidget(b)
 
         # ---- counter cards ----
@@ -383,8 +390,6 @@ class Dashboard(QMainWindow):
     def start_live(self):
         self.frame_model.start_live()
         self.card_frames.set_value(0)
-        self.recorder.clear()
-        self.btn_save.setText("Save live CSV")
         self.client = BridgeClient()
         self.client.frame_received.connect(self.on_live_frame)
         self.client.status_changed.connect(self.on_bridge_status)
@@ -414,29 +419,53 @@ class Dashboard(QMainWindow):
         self.frame_view.scrollToBottom()
         self.card_frames.set_value(self.frame_model.total)
         self.rate_chart.record()
-        self.recorder.add(f)
-        self.btn_save.setText(f"Save live CSV ({len(self.recorder)})")
+        print("chart count:", self.rate_chart._count)
+
+        for kind, score in self.detector.check(f):
+            self.add_alert(
+                time.strftime("%H:%M:%S"),
+                f.get("can_id", ""),
+                kind,
+                score,
+            )
 
     def feed_rate_chart(self):
         """Tell the message rate chart that one frame arrived."""
         self.rate_chart.record()
+        print("chart count:", self.rate_chart._count)
 
-    def save_live_csv(self):
-        """Save the frames received in live mode to a CSV file."""
-        if len(self.recorder) == 0:
-            self.status.setText("No live frames to save yet. Click Start live first.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save live frames", self.recorder.default_path(),
-            "CSV files (*.csv)")
-        if not path:
-            return
-        try:
-            saved = self.recorder.save(path)
+    def toggle_detector(self):
+        """Click to learn, click again to detect, click again to stop."""
+        if self.detector.mode == "off":
+            self.detector.start_learning()
+            self.btn_detect.setText("Learning...")
             self.status.setText(
-                f"Saved {saved} frames ({self.recorder.summary()}) to {path}")
-        except OSError as e:
-            self.status.setText(f"Could not save file: {e}")
+                "Learning normal traffic. Send normal frames for 10 seconds."
+            )
+
+        elif self.detector.mode == "learning":
+            if self.detector.finish_learning():
+                self.btn_detect.setText("Detector: On")
+                self.status.setText("Detector is on.")
+            else:
+                self.status.setText(
+                    "No frames learned. Start live feed and send normal frames."
+                )
+
+        else:
+            self.detector.stop()
+            self.btn_detect.setText("Detector: Off")
+            self.status.setText("Detector is off.")
+
+
+    def check_missing(self):
+        for can_id, kind, score in self.detector.check_missing():
+            self.add_alert(
+                time.strftime("%H:%M:%S"),
+                can_id,
+                kind,
+                score,
+            )
 
     def closeEvent(self, event):
         self.stop_live()
