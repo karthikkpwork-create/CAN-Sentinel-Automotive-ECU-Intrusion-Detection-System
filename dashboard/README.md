@@ -5,6 +5,7 @@ A CSV-based CAN Frame Viewer built using Python and PyQt5 to display CAN frames 
 
 ## Key Features
 - Load CAN frame data from CSV files.
+- Save frames received during a live session to CSV.
 - Display timestamps, CAN IDs, DLC, and payload data.
 - Stretchable columns and alternating row colors for readability.
 - Ready for integration with real-time monitors and intrusion detection alerts.
@@ -86,7 +87,9 @@ Python packages: `python-can` (Ubuntu), `PyQt5` and `pyqtgraph` (Windows).
    python dashboard.py
    ```
 3. Click **Start live**. The bottom line shows `Live: Connected`.
-4. Ubuntu terminal 2: send frames.
+4. Click **Save live CSV** to export frames received in the current live session.
+   The button shows the number of frames recorded.
+5. Ubuntu terminal 2: send frames.
    ```
    cansend vcan0 123#1122334455667788
    ```
@@ -104,5 +107,4 @@ Python packages: `python-can` (Ubuntu), `PyQt5` and `pyqtgraph` (Windows).
 - Detector alerts will appear in the Alerts panel when the detector calls `add_alert()`. The detector is not connected to the live feed yet.
 
 ### Screenshot
-
-![Dashboard in live mode](docs/screenshots/dashboard-live.png)
+![alt text](image-1.png)

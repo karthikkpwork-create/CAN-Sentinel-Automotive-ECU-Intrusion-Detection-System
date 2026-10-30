@@ -7,10 +7,11 @@ from bridge_client import BridgeClient
 from widgets import MessageRateChart, StatCard, StatusPill
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
+from id_filter import IdFilterProxy
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableView, QPushButton, QLabel,
     QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QHeaderView,
-    QSplitter, QGroupBox,
+    QSplitter, QGroupBox,QLineEdit,
 )
 import pyqtgraph as pg          # keep this import AFTER the PyQt5 imports
 from PyQt5.QtCore import QTimer
@@ -231,8 +232,11 @@ class Dashboard(QMainWindow):
         self.rate_chart.setMaximumHeight(200)
 
         # ---- left: frame table ----
+        self.frame_proxy = IdFilterProxy()
+        self.frame_proxy.setSourceModel(self.frame_model)
         self.frame_view = QTableView()
-        self.frame_view.setModel(self.frame_model)
+        self.frame_view.setModel(self.frame_proxy)
+
         self.frame_view.setAlternatingRowColors(True)
         self.frame_view.setShowGrid(False)
         self.frame_view.setWordWrap(False)
@@ -241,7 +245,20 @@ class Dashboard(QMainWindow):
         hh.setDefaultSectionSize(120)
         hh.setStretchLastSection(True)
         frames_box = QGroupBox("Frames")
+
+        # ---- ID filter above the frames table ----
+        self.filter_label = QLabel("0 frames")
+        self.filter_label.setObjectName("Muted")
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter by CAN ID, e.g. 0x123 or 0x123, 0x244")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.textChanged.connect(self.on_filter_changed)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.filter_edit, 1)
+        filter_row.addWidget(self.filter_label)
+
         fl = QVBoxLayout()
+        fl.addLayout(filter_row)
         fl.addWidget(self.frame_view)
         frames_box.setLayout(fl)
 
@@ -379,6 +396,7 @@ class Dashboard(QMainWindow):
         except Exception as e:
             self.status.setText(f"Could not load file: {e}")
         self.update_counters()
+        self.update_filter_label()
 
     # ---------- live mode (vcan0 bridge) ----------
     def toggle_live(self):
@@ -389,6 +407,7 @@ class Dashboard(QMainWindow):
 
     def start_live(self):
         self.frame_model.start_live()
+        self.update_filter_label()
         self.card_frames.set_value(0)
         self.client = BridgeClient()
         self.client.frame_received.connect(self.on_live_frame)
@@ -420,7 +439,7 @@ class Dashboard(QMainWindow):
         self.card_frames.set_value(self.frame_model.total)
         self.rate_chart.record()
         print("chart count:", self.rate_chart._count)
-
+        self.update_filter_label()
         for kind, score in self.detector.check(f):
             self.add_alert(
                 time.strftime("%H:%M:%S"),
@@ -428,6 +447,7 @@ class Dashboard(QMainWindow):
                 kind,
                 score,
             )
+        
 
     def feed_rate_chart(self):
         """Tell the message rate chart that one frame arrived."""
@@ -466,6 +486,20 @@ class Dashboard(QMainWindow):
                 kind,
                 score,
             )
+
+    def on_filter_changed(self, text):
+        self.frame_proxy.set_text(text)
+        self.update_filter_label()
+
+    def update_filter_label(self):
+        total = self.frame_model.rowCount()
+        shown = self.frame_proxy.rowCount()
+        if not self.frame_proxy.has_filter():
+            self.filter_label.setText(f"{total} frames")
+        elif self.frame_proxy.id_column() is None:
+            self.filter_label.setText("No CAN ID column in this table")
+        else:
+            self.filter_label.setText(f"Showing {shown} of {total} frames")
 
     def closeEvent(self, event):
         self.stop_live()
@@ -548,6 +582,7 @@ class Dashboard(QMainWindow):
                        hex(random.randint(0x100, 0x7FF)),
                        random.choice(kinds),
                        round(random.uniform(0.6, 1.0), 2))
+                       
 
 
 if __name__ == "__main__":
