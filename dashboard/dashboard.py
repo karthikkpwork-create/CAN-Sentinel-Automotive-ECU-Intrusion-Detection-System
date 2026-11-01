@@ -2,6 +2,7 @@ import csv
 import random
 import sys
 import time
+from id_chart import IdCountChart
 from collections import Counter
 from bridge_client import BridgeClient
 from widgets import MessageRateChart, StatCard, StatusPill
@@ -230,6 +231,9 @@ class Dashboard(QMainWindow):
         self.rate_chart = MessageRateChart(window_seconds=60, dark=saved_dark_mode())
         self.rate_chart.setMinimumHeight(140)
         self.rate_chart.setMaximumHeight(200)
+        self.id_chart = IdCountChart(top_n=8, dark=saved_dark_mode())
+        self.id_chart.setMinimumHeight(140)
+        self.id_chart.setMaximumHeight(200)
 
         # ---- left: frame table ----
         self.frame_proxy = IdFilterProxy()
@@ -306,7 +310,12 @@ class Dashboard(QMainWindow):
         layout.setSpacing(12)
         layout.addLayout(top)
         layout.addLayout(cards)
-        layout.addWidget(self.rate_chart)
+        charts = QHBoxLayout()
+        charts.setSpacing(12)
+        charts.addWidget(self.rate_chart, 3)
+        charts.addWidget(self.id_chart, 2)
+        layout.addLayout(charts)
+        
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status)
         container = QWidget()
@@ -325,7 +334,7 @@ class Dashboard(QMainWindow):
         self.setStyleSheet(extra_qss(dark))           # extra look on top
         self.theme_button.setText("Light mode" if dark else "Dark mode")
         self.rate_chart.set_dark(dark)
-
+        self.id_chart.set_dark(dark)
         c = get_colors(dark)
         self.card_frames.set_accent(c["accent"])
         self.card_alerts.set_accent(c["danger"])
@@ -409,6 +418,7 @@ class Dashboard(QMainWindow):
         self.frame_model.start_live()
         self.update_filter_label()
         self.card_frames.set_value(0)
+        self.id_chart.reset_counts()
         self.client = BridgeClient()
         self.client.frame_received.connect(self.on_live_frame)
         self.client.status_changed.connect(self.on_bridge_status)
@@ -440,6 +450,7 @@ class Dashboard(QMainWindow):
         self.rate_chart.record()
         print("chart count:", self.rate_chart._count)
         self.update_filter_label()
+        self.id_chart.add(row[1])
         for kind, score in self.detector.check(f):
             self.add_alert(
                 time.strftime("%H:%M:%S"),
