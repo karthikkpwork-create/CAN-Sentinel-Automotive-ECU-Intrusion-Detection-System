@@ -9,6 +9,7 @@ from widgets import MessageRateChart, StatCard, StatusPill
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
 from id_filter import IdFilterProxy
+from frame_detail import FrameDetail
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableView, QPushButton, QLabel,
     QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QHeaderView,
@@ -240,6 +241,10 @@ class Dashboard(QMainWindow):
         self.frame_proxy.setSourceModel(self.frame_model)
         self.frame_view = QTableView()
         self.frame_view.setModel(self.frame_proxy)
+        self.frame_view.setSelectionBehavior(QTableView.SelectRows)
+        self.detail = FrameDetail()
+        self.frame_view.selectionModel().currentRowChanged.connect(self.on_frame_selected)
+
 
         self.frame_view.setAlternatingRowColors(True)
         self.frame_view.setShowGrid(False)
@@ -264,6 +269,7 @@ class Dashboard(QMainWindow):
         fl = QVBoxLayout()
         fl.addLayout(filter_row)
         fl.addWidget(self.frame_view)
+        fl.addWidget(self.detail)
         frames_box.setLayout(fl)
 
         # ---- right top: alert panel ----
@@ -512,6 +518,15 @@ class Dashboard(QMainWindow):
         else:
             self.filter_label.setText(f"Showing {shown} of {total} frames")
 
+    def on_frame_selected(self, current, previous):
+        """Show the clicked frame in the detail panel."""
+        if not current.isValid():
+            self.detail.clear()
+            return
+        source = self.frame_proxy.mapToSource(current)   # the filter may hide rows
+        if 0 <= source.row() < len(self.frame_model.rows):
+            self.detail.show_frame(self.frame_model.header,
+                                   self.frame_model.rows[source.row()])
     def closeEvent(self, event):
         self.stop_live()
         super().closeEvent(event)
