@@ -38,6 +38,8 @@ from src.simulator.payload import PayloadGenerator
 from src.utils.can_frame import CanInterfaceError, format_can_id
 from src.utils.config import Config, ConfigError, MessageDef, load_config, validate_interface_name
 from src.utils.dataset import ATTACK_SENDER_COLUMNS, CsvSink
+
+SUPPRESSED_COLUMNS = ["timestamp", "can_id", "can_id_hex", "label", "attack_type"]
 from src.utils.logging_setup import setup_logging
 
 DRY_RUN_EPOCH = 1_700_000_000.0
@@ -433,6 +435,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg = dataclasses.replace(cfg, **overrides)
         target_id = parse_id(args.target_id)
         unknown_id = parse_id(args.unknown_id)
+        if not 0 <= target_id <= 0x7FF or not 0 <= unknown_id <= 0x7FF:
+            raise ConfigError("CAN IDs must be standard 11-bit values (0x000-0x7FF)")
+        if args.injection_interval_ms <= 0:
+            raise ConfigError("--injection-interval-ms must be > 0")
+        if args.attack_duration <= 0 or args.attack_start < 0:
+            raise ConfigError("--attack-start must be >= 0 and --attack-duration > 0")
+        if args.attack in (ATTACK_PAYLOAD_TAMPERING, ATTACK_MISSING_MESSAGE, ATTACK_MIXED) \
+                and target_id not in cfg.id_lookup():
+            raise ConfigError(f"--target-id {format_can_id(target_id)} is not a message in the config; "
+                              f"{args.attack} would have no effect")
+        if args.attack in (ATTACK_INJECTION, ATTACK_UNKNOWN_ID, ATTACK_PAYLOAD_TAMPERING, ATTACK_MISSING_MESSAGE) \
+                and args.attack_start >= cfg.runtime_seconds:
+            raise ConfigError(f"--attack-start ({args.attack_start}s) is not before the end of the run "
+                              f"({cfg.runtime_seconds}s); no attack would happen")
     except ConfigError as exc:
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return 2
@@ -452,12 +468,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     sender = None
     sink = None
+    supp_sink = None
     out_path = args.output or "data/generated/attack_dataset.csv"
 
     try:
         if not args.dry_run:
             sender = SocketCanSender(cfg.interface)
         sink = CsvSink(out_path, ATTACK_SENDER_COLUMNS)
+        if args.attack in (ATTACK_MISSING_MESSAGE, ATTACK_MIXED):
+            supp_path = (out_path[:-4] if out_path.lower().endswith(".csv") else out_path) + "_suppressed.csv"
+            supp_sink = CsvSink(supp_path, SUPPRESSED_COLUMNS)
         mode_str = "DRY RUN (virtual clock)" if args.dry_run else f"transmitting on {cfg.interface}"
         log.info("Starting Attack Simulator: mode=%s, attack=%s, runtime=%.1fs, seed=%d",
                  mode_str, args.attack, cfg.runtime_seconds, cfg.random_seed)
@@ -475,6 +495,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             attack_start=args.attack_start,
             attack_duration=args.attack_duration,
             logger=log,
+            on_suppressed=supp_sink.write if supp_sink else None,
         )
     except CanInterfaceError as exc:
         log.error("Interface error: %s", exc)
@@ -485,6 +506,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     finally:
         if sink is not None:
             sink.close()
+        if supp_sink is not None:
+            supp_sink.close()
         if sender is not None:
             sender.close()
 
