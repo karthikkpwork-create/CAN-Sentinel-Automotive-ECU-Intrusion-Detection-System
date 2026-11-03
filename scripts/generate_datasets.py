@@ -32,6 +32,8 @@ from src.simulator.attack_traffic_simulator import (
     ATTACK_UNKNOWN_ID,
     run_attack_simulation,
 )
+from src.simulator.attack_traffic_simulator import DRY_RUN_EPOCH, build_attack_schedule
+from src.utils.can_frame import format_can_id
 from src.utils.config import load_config
 from src.utils.dataset import ATTACK_SENDER_COLUMNS, CsvSink
 
@@ -44,6 +46,19 @@ DATASETS = [
     ("attack_missing_message.csv", ATTACK_MISSING_MESSAGE, "ECU suspension / missing message attack"),
     ("mixed_traffic.csv", ATTACK_MIXED, "Multi-attack mixed scenario"),
 ]
+
+
+SUPPRESSED_COLUMNS = ["timestamp", "can_id", "can_id_hex", "label", "attack_type"]
+WINDOW_COLUMNS = ["dataset", "attack_type", "start_s", "end_s", "start_timestamp", "end_timestamp", "target_can_id_hex"]
+
+
+def write_attack_windows(path: str, rows: list) -> None:
+    """Ground-truth attack windows (needed to evaluate missing_message, which has no attack rows)."""
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(WINDOW_COLUMNS)
+        w.writerows(rows)
 
 
 def generate_all(config_path: str, output_dir: str, duration: float, seed: int) -> None:
@@ -59,10 +74,15 @@ def generate_all(config_path: str, output_dir: str, duration: float, seed: int) 
     print(f" Duration: {duration}s per dataset | Seed: {seed}")
     print(f"============================================================\n")
 
+    window_rows = []
     for filename, attack_type, description in DATASETS:
         out_path = os.path.join(output_dir, filename)
         print(f"-> Generating {filename:<32} [{description}]...")
         stop = threading.Event()
+        supp_sink = None
+        if attack_type in (ATTACK_MISSING_MESSAGE, ATTACK_MIXED):
+            supp_sink = CsvSink(out_path[:-4] + "_suppressed.csv", SUPPRESSED_COLUMNS)
+        a_start, a_dur = max(2.0, duration * 0.2), max(3.0, duration * 0.25)
         with CsvSink(out_path, ATTACK_SENDER_COLUMNS) as sink:
             stats = run_attack_simulation(
                 cfg=cfg,
@@ -74,11 +94,19 @@ def generate_all(config_path: str, output_dir: str, duration: float, seed: int) 
                 target_id=0x100,
                 unknown_id=0x7FF,
                 injection_interval_ms=5.0,
-                attack_start=max(2.0, duration * 0.2),
-                attack_duration=max(3.0, duration * 0.25),
+                attack_start=a_start,
+                attack_duration=a_dur,
+                on_suppressed=supp_sink.write if supp_sink else None,
             )
+        if supp_sink:
+            supp_sink.close()
+        for ev in build_attack_schedule(attack_type, duration, 0x100, 0x7FF, a_start, a_dur):
+            window_rows.append([filename, ev.attack_type, f"{ev.start_time:.3f}", f"{ev.end_time:.3f}",
+                                f"{DRY_RUN_EPOCH + ev.start_time:.6f}", f"{DRY_RUN_EPOCH + ev.end_time:.6f}",
+                                format_can_id(ev.target_id)])
         print(f"   Done: {stats.generated} frames (Normal={stats.normal_count}, Attack={stats.attack_count}, Suppressed={stats.suppressed})")
 
+    write_attack_windows(os.path.join(output_dir, "attack_windows.csv"), window_rows)
     print("\n[SUCCESS] All datasets generated successfully!")
 
 
