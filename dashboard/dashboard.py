@@ -2,12 +2,14 @@ import csv
 import random
 import sys
 import time
+from id_chart import IdCountChart
 from collections import Counter
 from bridge_client import BridgeClient
 from widgets import MessageRateChart, StatCard, StatusPill
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
 from id_filter import IdFilterProxy
+from frame_detail import FrameDetail
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableView, QPushButton, QLabel,
     QVBoxLayout, QHBoxLayout, QWidget, QFileDialog, QHeaderView,
@@ -230,12 +232,19 @@ class Dashboard(QMainWindow):
         self.rate_chart = MessageRateChart(window_seconds=60, dark=saved_dark_mode())
         self.rate_chart.setMinimumHeight(140)
         self.rate_chart.setMaximumHeight(200)
+        self.id_chart = IdCountChart(top_n=8, dark=saved_dark_mode())
+        self.id_chart.setMinimumHeight(140)
+        self.id_chart.setMaximumHeight(200)
 
         # ---- left: frame table ----
         self.frame_proxy = IdFilterProxy()
         self.frame_proxy.setSourceModel(self.frame_model)
         self.frame_view = QTableView()
         self.frame_view.setModel(self.frame_proxy)
+        self.frame_view.setSelectionBehavior(QTableView.SelectRows)
+        self.detail = FrameDetail()
+        self.frame_view.selectionModel().currentRowChanged.connect(self.on_frame_selected)
+
 
         self.frame_view.setAlternatingRowColors(True)
         self.frame_view.setShowGrid(False)
@@ -260,6 +269,7 @@ class Dashboard(QMainWindow):
         fl = QVBoxLayout()
         fl.addLayout(filter_row)
         fl.addWidget(self.frame_view)
+        fl.addWidget(self.detail)
         frames_box.setLayout(fl)
 
         # ---- right top: alert panel ----
@@ -306,7 +316,12 @@ class Dashboard(QMainWindow):
         layout.setSpacing(12)
         layout.addLayout(top)
         layout.addLayout(cards)
-        layout.addWidget(self.rate_chart)
+        charts = QHBoxLayout()
+        charts.setSpacing(12)
+        charts.addWidget(self.rate_chart, 3)
+        charts.addWidget(self.id_chart, 2)
+        layout.addLayout(charts)
+        
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status)
         container = QWidget()
@@ -325,7 +340,7 @@ class Dashboard(QMainWindow):
         self.setStyleSheet(extra_qss(dark))           # extra look on top
         self.theme_button.setText("Light mode" if dark else "Dark mode")
         self.rate_chart.set_dark(dark)
-
+        self.id_chart.set_dark(dark)
         c = get_colors(dark)
         self.card_frames.set_accent(c["accent"])
         self.card_alerts.set_accent(c["danger"])
@@ -409,6 +424,7 @@ class Dashboard(QMainWindow):
         self.frame_model.start_live()
         self.update_filter_label()
         self.card_frames.set_value(0)
+        self.id_chart.reset_counts()
         self.client = BridgeClient()
         self.client.frame_received.connect(self.on_live_frame)
         self.client.status_changed.connect(self.on_bridge_status)
@@ -440,6 +456,7 @@ class Dashboard(QMainWindow):
         self.rate_chart.record()
         print("chart count:", self.rate_chart._count)
         self.update_filter_label()
+        self.id_chart.add(row[1])
         for kind, score in self.detector.check(f):
             self.add_alert(
                 time.strftime("%H:%M:%S"),
@@ -501,6 +518,15 @@ class Dashboard(QMainWindow):
         else:
             self.filter_label.setText(f"Showing {shown} of {total} frames")
 
+    def on_frame_selected(self, current, previous):
+        """Show the clicked frame in the detail panel."""
+        if not current.isValid():
+            self.detail.clear()
+            return
+        source = self.frame_proxy.mapToSource(current)   # the filter may hide rows
+        if 0 <= source.row() < len(self.frame_model.rows):
+            self.detail.show_frame(self.frame_model.header,
+                                   self.frame_model.rows[source.row()])
     def closeEvent(self, event):
         self.stop_live()
         super().closeEvent(event)
