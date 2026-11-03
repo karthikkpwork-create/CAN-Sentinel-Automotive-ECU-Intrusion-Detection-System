@@ -178,6 +178,7 @@ def run_attack_simulation(
     attack_start: float = 5.0,
     attack_duration: float = 5.0,
     logger=None,
+    on_suppressed: Optional[Callable[[Dict[str, object]], None]] = None,
 ) -> AttackSimStats:
     """Run normal traffic interleaved with configured attack behaviors."""
     if not dry_run and sender is None:
@@ -267,6 +268,14 @@ def run_attack_simulation(
         # Handling Attack 4: Missing message suppression
         if is_normal_stream and ATTACK_MISSING_MESSAGE in active_types:
             stats.suppressed += 1
+            if on_suppressed is not None:
+                on_suppressed({
+                    "timestamp": f"{(wall_start + due) if dry_run else time.time():.6f}",
+                    "can_id": can_id,
+                    "can_id_hex": format_can_id(can_id),
+                    "label": 1,
+                    "attack_type": ATTACK_MISSING_MESSAGE,
+                })
             # Re-schedule normal message for next period without sending
             next_due = due + period[can_id] * (1.0 + schedule_rng.uniform(-jitter, jitter))
             heapq.heappush(heap, (next_due, can_id, True, meta))

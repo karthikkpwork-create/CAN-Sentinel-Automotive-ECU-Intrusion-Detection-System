@@ -1,0 +1,9 @@
+dataset,attack_type,start_s,end_s,start_timestamp,end_timestamp,target_can_id_hex
+validation_attacks_mixed.csv,injection,22.500,45.000,1700000022.500000,1700000045.000000,0x100
+validation_attacks_mixed.csv,unknown_id,56.250,78.750,1700000056.250000,1700000078.750000,0x7FF
+validation_attacks_mixed.csv,payload_tampering,90.000,112.500,1700000090.000000,1700000112.500000,0x100
+validation_attacks_mixed.csv,missing_message,123.750,146.250,1700000123.750000,1700000146.250000,0x100
+timestamp_sample_mixed.csv,injection,1.250,2.500,1700000001.250000,1700000002.500000,0x100
+timestamp_sample_mixed.csv,unknown_id,3.125,4.375,1700000003.125000,1700000004.375000,0x7FF
+timestamp_sample_mixed.csv,payload_tampering,5.000,6.250,1700000005.000000,1700000006.250000,0x100
+timestamp_sample_mixed.csv,missing_message,6.875,8.125,1700000006.875000,1700000008.125000,0x100
