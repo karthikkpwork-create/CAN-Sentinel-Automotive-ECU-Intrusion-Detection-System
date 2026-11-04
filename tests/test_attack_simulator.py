@@ -139,3 +139,31 @@ class AttackSimulatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissingMessageGroundTruthTests(unittest.TestCase):
+    def test_suppressed_frames_are_reported_with_label_1(self):
+        cfg = load_config(EXAMPLE)
+        rows, supp = [], []
+        stats = run_attack_simulation(
+            cfg=cfg, attack_mode=ATTACK_MISSING_MESSAGE, stop=threading.Event(), sender=None,
+            on_record=rows.append, dry_run=True, target_id=0x100,
+            attack_start=2.0, attack_duration=3.0, on_suppressed=supp.append,
+        )
+        self.assertGreater(stats.suppressed, 0)
+        self.assertEqual(len(supp), stats.suppressed)
+        for r in supp:
+            self.assertEqual(r["label"], 1)
+            self.assertEqual(r["attack_type"], ATTACK_MISSING_MESSAGE)
+            self.assertEqual(r["can_id"], 0x100)
+        # no suppressed frame may also appear in the main dataset
+        self.assertEqual(sum(1 for r in rows if r["attack_type"] == ATTACK_MISSING_MESSAGE), 0)
+
+    def test_callback_is_optional_and_output_unchanged(self):
+        cfg = load_config(EXAMPLE)
+        a, b = [], []
+        kw = dict(cfg=cfg, attack_mode=ATTACK_MIXED, stop=threading.Event(), sender=None, dry_run=True)
+        run_attack_simulation(on_record=a.append, **kw)
+        kw["stop"] = threading.Event()
+        run_attack_simulation(on_record=b.append, on_suppressed=lambda r: None, **kw)
+        self.assertEqual(a, b)
