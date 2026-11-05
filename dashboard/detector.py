@@ -11,10 +11,21 @@ def parse_data(text):
         return []
 
 
+def normalize_can_id(value):
+    """Normalize CAN IDs to a consistent string form."""
+    text = str(value).strip().lower()
+    if not text:
+        return ""
+    if text.startswith("0x"):
+        text = text[2:]
+    return text
+
+
 class RuleDetector:
     def __init__(self, cooldown=2.0):
         self.mode = "off"
         self.cooldown = cooldown
+        self.clock = time.time
         self.reset()
 
     def reset(self):
@@ -41,7 +52,7 @@ class RuleDetector:
                     stats["total_dt"] / (stats["count"] - 1)
                 )
 
-        now = time.time()
+        now = self.clock()
         for can_id in self.stats:
             self.last_seen[can_id] = now
 
@@ -102,7 +113,7 @@ class RuleDetector:
         if self.mode == "off":
             return []
 
-        can_id = str(frame.get("can_id", ""))
+        can_id = normalize_can_id(frame.get("can_id", ""))
 
         try:
             timestamp = float(frame.get("timestamp", 0))
@@ -116,7 +127,7 @@ class RuleDetector:
             self._learn(can_id, timestamp, dlc, values)
             return []
 
-        self.last_seen[can_id] = time.time()
+        self.last_seen[can_id] = self.clock()
         self.missing_reported.discard(can_id)
 
         # Unknown CAN ID
@@ -170,7 +181,7 @@ class RuleDetector:
         if self.mode != "on":
             return []
 
-        now = time.time()
+        now = self.clock()
         found = []
 
         for can_id, mean in self.mean_interval.items():
