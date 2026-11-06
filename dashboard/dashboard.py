@@ -427,6 +427,7 @@ class Dashboard(QMainWindow):
         self.id_chart.reset_counts()
         self.client = BridgeClient()
         self.client.frame_received.connect(self.on_live_frame)
+        self.client.alert_received.connect(self.on_alert)
         self.client.status_changed.connect(self.on_bridge_status)
         self.client.start()
         self.btn_live.setText("Stop live")
@@ -465,6 +466,16 @@ class Dashboard(QMainWindow):
                 score,
             )
         
+    def on_alert(self, msg):
+        timestamp = time.strftime(
+            "%H:%M:%S", time.localtime(float(msg["timestamp"]))
+        )
+        self.add_alert(
+            timestamp,
+            msg["can_id_hex"],
+            "interval anomaly",
+            float(msg["score"]),
+        )
 
     def feed_rate_chart(self):
         """Tell the message rate chart that one frame arrived."""
