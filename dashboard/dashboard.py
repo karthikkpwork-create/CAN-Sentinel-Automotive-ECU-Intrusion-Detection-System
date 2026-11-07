@@ -3,6 +3,7 @@ import random
 import sys
 import time
 from id_chart import IdCountChart
+from id_monitor import CanIdMonitorPanel
 from collections import Counter
 from bridge_client import BridgeClient
 from widgets import MessageRateChart, StatCard, StatusPill
@@ -184,6 +185,7 @@ class Dashboard(QMainWindow):
         self.client = None                            # live bridge thread
         self.detector = RuleDetector()
         self.recorder = FrameRecorder()
+        self.id_monitor = CanIdMonitorPanel()
 
         self.missing_timer = QTimer(self)
         self.missing_timer.timeout.connect(self.check_missing)
@@ -280,7 +282,9 @@ class Dashboard(QMainWindow):
         fl.addWidget(self.detail)
         frames_box.setLayout(fl)
 
-        # ---- right top: alert panel ----
+        # ---- right top: CAN ID monitor panel ----
+
+        # ---- right next: alert panel ----
         self.alert_view = QTableView()
         self.alert_view.setModel(self.alert_model)
         self.alert_view.setShowGrid(False)
@@ -307,6 +311,7 @@ class Dashboard(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(8)
+        rl.addWidget(self.id_monitor, 2)
         rl.addWidget(alerts_box, 3)
         rl.addWidget(chart_box, 2)
 
@@ -416,6 +421,7 @@ class Dashboard(QMainWindow):
     def load_frames(self, path):
         try:
             self.frame_model.load_csv(path)
+            self.id_monitor.load_rows(self.frame_model.rows, self.frame_model.header)
             self.status.setText(f"{path}  |  {self.frame_model.rowCount()} frames")
         except Exception as e:
             self.status.setText(f"Could not load file: {e}")
@@ -431,6 +437,7 @@ class Dashboard(QMainWindow):
 
     def start_live(self):
         self.frame_model.start_live()
+        self.id_monitor.reset()
         self.recorder.clear()
         self.btn_save_live.setText("Save live CSV (0)")
         self.btn_save_live.setEnabled(False)
@@ -467,6 +474,7 @@ class Dashboard(QMainWindow):
             str(f.get("extended", "")),
         ]
         self.frame_model.add_frame(row)
+        self.id_monitor.record_frame(f)
         self.frame_view.scrollToBottom()
         self.card_frames.set_value(self.frame_model.total)
         self.rate_chart.record()
