@@ -87,7 +87,8 @@ class CanIdMonitorPanel(QWidget):
         """Load a CSV snapshot and rebuild the monitor from it."""
         self.reset()
         lower = [str(h).strip().lower() for h in header]
-        can_idx = lower.index("can_id") if "can_id" in lower else None
+        can_name = "can_id_hex" if "can_id_hex" in lower else "can_id"
+        can_idx = lower.index(can_name) if can_name in lower else None
         time_idx = lower.index("timestamp") if "timestamp" in lower else None
         for row in rows:
             if can_idx is None:

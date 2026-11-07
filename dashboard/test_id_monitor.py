@@ -39,12 +39,12 @@ def test_monitor_counts_ids_and_tracks_gap():
 def test_monitor_load_rows_from_csv_snapshot():
     panel = CanIdMonitorPanel()
     rows = [
-        ["1.0", "0x123", "8", "11 22"],
-        ["2.0", "123", "8", "33 44"],
-        ["4.0", "0x244", "8", "55 66"],
+        ["1.0", "256", "0x100", "8", "11 22"],
+        ["2.0", "256", "0x100", "8", "33 44"],
+        ["4.0", "512", "0x200", "8", "55 66"],
     ]
-    header = ["timestamp", "can_id", "dlc", "data"]
+    header = ["timestamp", "can_id", "can_id_hex", "dlc", "data"]
 
     panel.load_rows(rows, header)
     ids = {row["can_id"] for row in panel.snapshot()}
-    assert {"123", "244"}.issubset(ids)
+    assert {"100", "200"}.issubset(ids)
