@@ -6,6 +6,7 @@ from id_chart import IdCountChart
 from collections import Counter
 from bridge_client import BridgeClient
 from widgets import MessageRateChart, StatCard, StatusPill
+from csv_export import FrameRecorder
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PyQt5.QtGui import QColor
 from id_filter import IdFilterProxy
@@ -182,6 +183,7 @@ class Dashboard(QMainWindow):
         self.dark = saved_dark_mode()                 # last mode used
         self.client = None                            # live bridge thread
         self.detector = RuleDetector()
+        self.recorder = FrameRecorder()
 
         self.missing_timer = QTimer(self)
         self.missing_timer.timeout.connect(self.check_missing)
@@ -202,6 +204,9 @@ class Dashboard(QMainWindow):
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_detect = QPushButton("Detector: Off")
         self.btn_detect.clicked.connect(self.toggle_detector)
+        self.btn_save_live = QPushButton("Save live CSV (0)")
+        self.btn_save_live.setEnabled(False)
+        self.btn_save_live.clicked.connect(self.save_live_csv)
         btn_test = QPushButton("Add test alert")
         btn_test.clicked.connect(self.add_test_alert)
         btn_clear = QPushButton("Clear alerts")
@@ -209,14 +214,17 @@ class Dashboard(QMainWindow):
         self.theme_button = QPushButton()             # dark / light button
         self.theme_button.clicked.connect(self.toggle_theme)
 
-        top = QHBoxLayout()
-        top.setSpacing(10)
-        top.addWidget(title)
-        top.addWidget(self.status_pill)
-        top.addStretch()
-        for b in (btn_frames, btn_alerts, self.btn_live, btn_test,
-                  btn_clear, self.theme_button):
-            top.addWidget(b)
+        heading = QHBoxLayout()
+        heading.addWidget(title)
+        heading.addWidget(self.status_pill)
+        heading.addStretch()
+        heading.addWidget(self.theme_button)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        for b in (btn_frames, btn_alerts, self.btn_live, self.btn_detect,
+              self.btn_save_live, btn_test, btn_clear):
+            actions.addWidget(b)
 
         # ---- counter cards ----
         self.card_frames = StatCard("Frames loaded", 0)
@@ -314,7 +322,8 @@ class Dashboard(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 12)
         layout.setSpacing(12)
-        layout.addLayout(top)
+        layout.addLayout(heading)
+        layout.addLayout(actions)
         layout.addLayout(cards)
         charts = QHBoxLayout()
         charts.setSpacing(12)
@@ -422,6 +431,9 @@ class Dashboard(QMainWindow):
 
     def start_live(self):
         self.frame_model.start_live()
+        self.recorder.clear()
+        self.btn_save_live.setText("Save live CSV (0)")
+        self.btn_save_live.setEnabled(False)
         self.update_filter_label()
         self.card_frames.set_value(0)
         self.id_chart.reset_counts()
@@ -444,6 +456,9 @@ class Dashboard(QMainWindow):
         self.status.setText(f"Live: {text}")
 
     def on_live_frame(self, f):
+        self.recorder.add(f)
+        self.btn_save_live.setText(f"Save live CSV ({len(self.recorder)})")
+        self.btn_save_live.setEnabled(bool(len(self.recorder)))
         row = [
             f"{float(f.get('timestamp', 0)):.3f}",
             str(f.get("can_id", "")),
@@ -455,7 +470,6 @@ class Dashboard(QMainWindow):
         self.frame_view.scrollToBottom()
         self.card_frames.set_value(self.frame_model.total)
         self.rate_chart.record()
-        print("chart count:", self.rate_chart._count)
         self.update_filter_label()
         self.id_chart.add(row[1])
         for kind, score in self.detector.check(f):
@@ -480,7 +494,22 @@ class Dashboard(QMainWindow):
     def feed_rate_chart(self):
         """Tell the message rate chart that one frame arrived."""
         self.rate_chart.record()
-        print("chart count:", self.rate_chart._count)
+
+    def save_live_csv(self):
+        if not len(self.recorder):
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save live frames", self.recorder.default_path(),
+            "CSV files (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            saved = self.recorder.save(path)
+        except OSError as e:
+            self.status.setText(f"Could not save live frames: {e}")
+            return
+        self.status.setText(f"Saved {saved} live frames to {path}")
 
     def toggle_detector(self):
         """Click to learn, click again to detect, click again to stop."""
