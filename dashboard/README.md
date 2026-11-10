@@ -8,6 +8,7 @@ A CSV-based CAN Frame Viewer built using Python and PyQt5 to display CAN frames 
 - Save frames received during a live session to CSV.
 - Display timestamps, CAN IDs, DLC, and payload data.
 - Stretchable columns and alternating row colors for readability.
+- Monitor per-ID traffic volume and activity using the CAN ID Monitoring Panel.
 - Ready for integration with real-time monitors and intrusion detection alerts.
 
 ## Requirements

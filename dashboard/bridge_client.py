@@ -8,6 +8,7 @@ class BridgeClient(QThread):
     """Reads CAN frames (one JSON object per line) from the vcan0 bridge."""
 
     frame_received = pyqtSignal(dict)
+    alert_received = pyqtSignal(dict)
     status_changed = pyqtSignal(str)
 
     def __init__(self, host="127.0.0.1", port=8765, parent=None):
@@ -38,7 +39,11 @@ class BridgeClient(QThread):
                         if not line.strip():
                             continue
                         try:
-                            self.frame_received.emit(json.loads(line))
+                            message = json.loads(line)
+                            if message.get("type") == "alert":
+                                self.alert_received.emit(message)
+                            else:
+                                self.frame_received.emit(message)
                         except json.JSONDecodeError:
                             pass
             except OSError:
