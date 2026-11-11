@@ -28,3 +28,4 @@ results/*
 .vscode/
 .idea/
 .DS_Store
+data/features/*.csv
