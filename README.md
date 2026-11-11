@@ -10,12 +10,12 @@ connecting to or testing a real vehicle.
 | Component | Status |
 |---|---|
 | Normal synthetic traffic simulator | Implemented; supports a no-interface dry run |
-| Synthetic attack traffic and labeled dataset generator | Implemented; dataset generation runs offline |
+| Synthetic attack traffic and labeled dataset generator | Implemented; includes attack-window metadata and suppressed-frame datasets |
 | PyQt CSV viewer and dashboard | Implemented; CSV loading was exercised with a generated capture |
 | Live dashboard bridge for `vcan0` | Code is present; end-to-end live operation still needs validation on a configured `vcan0` |
 | Dashboard detector | Rule-based heuristic detector; it is not an Isolation Forest |
-| Isolation Forest training/inference pipeline | Not included in this checkout |
-| Independent Python/C CAN capture and sender/observer comparison tools | Not included in this checkout |
+| Offline ML feature, training, prediction, and evaluation pipeline | Implemented with an Isolation Forest; evaluated on synthetic traffic only |
+| Linux CAN capture and sender/observer comparison tools | Python tools are present; live ML detection from `vcan0` is not implemented |
 
 The dashboard details and controls are in [dashboard/README.md](dashboard/README.md).
 
@@ -35,6 +35,19 @@ needs `python-can` in the environment where the bridge runs:
 
 ```bash
 python -m pip install python-can
+```
+
+For the offline detector demo, install its dependencies as well:
+
+```bash
+python -m pip install -r requirements-detector.txt
+```
+
+For the feature-table trainer/predictor and its checked-in model, install the
+pinned ML dependencies (including the model's scikit-learn version):
+
+```bash
+python -m pip install -r requirements.txt
 ```
 
 ## Run a safe offline demo
@@ -80,6 +93,21 @@ python scripts/generate_datasets.py \
 The output directory includes CSV files and ground-truth attack windows.
 Missing-message scenarios also have a separate suppressed-frame CSV because a
 suppressed frame does not appear in the main traffic stream.
+
+## Run the offline ML pipeline
+
+On Linux or WSL with the detector dependencies installed, run:
+
+```bash
+bash scripts/run_pipeline_demo.sh offline --duration 60 --seed 42
+```
+
+This generates separate synthetic training and test datasets, trains the
+window-based Isolation Forest on normal training traffic, and reports
+detection results for mixed attacks and normal-only traffic. It uses a
+temporary work directory and removes it when finished; pass `--keep` to retain
+the generated datasets and model. This is a simulation demo, not a real-vehicle
+performance validation.
 
 ## Live dashboard on a virtual CAN bus
 
@@ -129,20 +157,34 @@ represent a detector result.
 `dashboard/detector.py` contains a basic rule-based detector. It can learn a
 baseline from live frames and check for unfamiliar IDs, unusually fast frames,
 payload length/value changes, and missing messages. Its thresholds are
-heuristics. This checkout does not include a trained Isolation Forest or an
-ML feature-extraction/training/inference pipeline.
+heuristics.
+
+The offline ML pipeline is implemented in `src/ml/` and `src/detector/`.
+It extracts time-window features, trains on normal traffic, calibrates a
+threshold with normal validation data, and evaluates against labeled
+simulated attack datasets. The repository includes a trained model and its
+simulation evaluation outputs. The ML detector does not yet consume live
+`vcan0` traffic; see [docs/ml_design.md](docs/ml_design.md) for its results and
+limitations.
+
+There are two separate offline interfaces: `scripts/run_pipeline_demo.sh`
+trains a temporary detector bundle directly from raw CAN CSVs, while
+`src/ml/train_detector.py` and `src/ml/predict.py` operate on extracted feature
+CSVs and the model/configuration under `models/`. Their model files are not
+interchangeable.
 
 ## Tests
 
 Install `pytest` in the active environment, then run the focused, hardware-free
-tests:
+simulator, detector, and attack-CLI tests:
 
 ```bash
-python -m pip install pytest
-QT_QPA_PLATFORM=offscreen python -m pytest -q \
+python -m pytest -q \
   tests/test_attack_simulator.py \
-  dashboard/test_detector.py \
-  dashboard/test_id_monitor.py
+  tests/test_detector.py \
+  tests/ml/test_detector.py \
+  tests/test_attack_cli_and_live.py \
+  tests/test_label_observed.py
 ```
 
 Some other `dashboard/test_*.py` files are standalone scripts rather than
@@ -150,7 +192,8 @@ pytest tests; avoid running the entire dashboard test directory blindly.
 
 ## Current checkout limitations
 
-There is no top-level `Makefile` or `requirements.txt` in this checkout.
-`scripts/setup_vcan.sh`, `scripts/run_demo.sh`, the independent capture
-programs, and the sender/observer comparison tool are also not present. Set up
-`vcan0` manually as above if you want to test the live bridge.
+The ML evaluation uses simulator-generated datasets, not independent vehicle
+captures; false positives remain significant and payload-tampering detection
+is weak. Live ML inference and detection latency on `vcan0` are not
+implemented/validated. This checkout has no `scripts/setup_vcan.sh`; configure
+`vcan0` manually as above if you want to test the live dashboard bridge.

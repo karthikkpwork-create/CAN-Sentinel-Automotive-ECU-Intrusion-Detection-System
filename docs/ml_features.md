@@ -1,70 +1,120 @@
-**Status: Target design.** This document describes the target design, not all behavior of the current extractor.
-
 # CAN-Sentinel — ML Feature Extraction
 
 ## 1. Objective
 
-Convert raw CAN traffic records into numerical, time-window-based features for downstream anomaly detection using Isolation Forest.
+Convert CAN traffic records into numerical, time-window-based features for anomaly detection. These features are used by the Isolation Forest detector to identify unusual traffic patterns for further investigation.
 
-## 2. Input data
+An anomaly is an indication for investigation, not proof of a cyberattack.
 
-The extractor accepts a CSV containing:
+## 2. Input Data
 
-- A timestamp column: `observed_timestamp` or `timestamp`
-- A CAN identifier column: `can_id_hex` or `can_id`
-- An optional `payload_hex` column
+The feature extractor processes generated CAN traffic records containing information such as:
 
-Numeric timestamps must have a documented unit. All timestamps are converted to seconds before window grouping.
+- CAN timestamps
+- CAN identifiers
+- Payload data
+- Traffic event information used for evaluation labels
 
-## 3. Window configuration
+The extractor processes the available input dataset and produces numerical features for each non-empty time window.
 
-The initial window duration is one second. Windows are anchored to the earliest valid timestamp in the capture. Records are sorted by timestamp before extraction.
+## 3. Time Window Configuration
 
-The window duration can be changed using the `--window-seconds` argument.
+The current implementation uses one-second time windows.
 
-## 4. Extracted features
+Traffic records are grouped into windows to calculate message frequency, identifier diversity, timing behaviour and payload changes.
 
-| Feature | Definition |
-|---|---|
-| `frame_count` | Number of CAN frames in the window |
-| `frames_per_second` | Frame count divided by window duration |
-| `unique_id_count` | Number of distinct CAN IDs in the window |
-| `mean_inter_arrival_s` | Mean difference between consecutive frame timestamps within the window |
-| `std_inter_arrival_s` | Population standard deviation of those time differences |
-| `payload_change_rate` | Changed comparable payload pairs divided by all comparable pairs |
-| `payload_comparison_count` | Number of consecutive, valid payload comparisons for the same CAN ID |
+The window duration is configurable through the feature extraction command.
 
-If a window contains insufficient timing observations, timing statistics are set to zero. If there are no comparable payload pairs, the payload change rate is set to zero and the comparison count is zero. Interpret this combination as insufficient comparison data, not proof that payloads did not change.
+## 4. Extracted Features
 
-## 5. Payload validation
+The extractor calculates seven features:
 
-Payloads are normalized by removing whitespace and an optional `0x` prefix, and converting hexadecimal characters to lowercase. Payloads with an odd number of hexadecimal characters or non-hexadecimal characters are excluded from payload comparisons and counted as invalid.
+| Feature | Definition | Possible security relevance |
+|---|---|---|
+| `frame_count` | Number of CAN frames in the window | Traffic-volume changes |
+| `frames_per_second` | Number of frames divided by window duration | Possible flooding |
+| `unique_id_count` | Number of distinct CAN identifiers | Unexpected message diversity |
+| `iat_mean` | Mean inter-arrival time between frames | Timing deviations |
+| `iat_std` | Standard deviation of inter-arrival times | Irregular message timing |
+| `payload_change_rate` | Fraction of comparable consecutive same-ID payload pairs that differ | Unusual payload changes |
+| `payload_comparisons` | Number of valid payload comparisons | Interpretation of payload-change rate |
 
-Payload comparisons are performed only between consecutive valid payloads for the same CAN ID within the same window.
+## 5. Features Used by the Model
 
-## 6. Output
+The Isolation Forest detector uses five numerical features:
 
-The extractor writes a CSV with one row per non-empty time window. Each row contains the window index, relative window boundaries, frame and ID counts, timing statistics, and payload-change statistics.
+- `frames_per_second`
+- `unique_id_count`
+- `iat_mean`
+- `iat_std`
+- `payload_change_rate`
 
-The input CSV is not modified.
+The following extracted features are not used as model inputs:
 
-## 7. Quality and repeatability checks
+- `frame_count`
+- `payload_comparisons`
 
-- Verify that the input schema matches the actual dataset.
-- Confirm timestamp units before processing numeric timestamps.
-- Check that output columns and row counts are as expected.
-- Check for empty cells and non-finite numeric values.
-- Run extraction twice with the same input and settings and compare output hashes.
+They are retained to support traffic analysis and interpretation.
 
-## 8. Limitations and future work
+Ground-truth labels and attack-type annotations are used for evaluation, not as model input features.
 
-- Anomalous feature values are not proof of malicious activity.
-- Legitimate vehicle operating conditions can change message rates and payloads.
-- Unknown-ID detection requires an approved CAN-ID allowlist.
-- Missing-message detection is improved by knowing the expected periodic message schedule.
-- Window duration should be evaluated against real traffic and the expected detection latency.
-- Isolation Forest training and evaluation are separate tasks and must use appropriately separated data.
+## 6. Payload Comparison
 
-No detection-performance claims are made until evaluation has been performed on suitable normal and labelled attack data.
+Payload-change rate is calculated using comparable consecutive payload observations for the same CAN identifier within a time window.
 
-## 9. Industry-relevant enhancements
+The calculation is:
+
+`payload_change_rate = changed_payload_pairs / valid_payload_comparisons`
+
+When there are no valid comparisons, the extractor leaves the rate blank and
+sets `payload_comparisons` to zero. The ML input loader fills blank timing and
+payload-rate features with zero so they can be scored. This is an imputation,
+not evidence that the payload remained unchanged; use the comparison count to
+identify insufficient payload data.
+
+## 7. Output
+
+The feature extraction process produces a CSV containing one row per non-empty time window.
+
+The output includes:
+
+- Window information
+- Frame count and frame rate
+- Unique CAN identifier count
+- Inter-arrival timing statistics
+- Payload-change statistics
+- Available ground-truth evaluation annotations
+
+The generated feature datasets are used by the training and evaluation pipeline.
+
+## 8. Relationship to Anomaly Detection
+
+The extracted features describe traffic behaviour rather than directly identifying an attack.
+
+For example:
+
+- Increased frame rate may indicate possible flooding.
+- Changes in CAN identifier diversity may indicate unusual message activity.
+- Irregular inter-arrival times may indicate timing anomalies.
+- Changes in payload patterns may indicate unusual message content.
+
+These indicators require further investigation and should not independently be treated as proof of malicious activity.
+
+## 9. Limitations and Future Improvements
+
+- Legitimate vehicle operating conditions can change traffic rates and payloads.
+- Unknown CAN-ID detection can be strengthened with an approved identifier allowlist.
+- Missing-message detection should use expected ECU message schedules and timing.
+- Payload-tampering detection needs improved features and validation.
+- Window duration should be evaluated against real traffic and detection latency.
+- Independent normal and attack capture sessions are needed to assess generalization.
+
+## 10. Implementation Status
+
+Feature extraction has been implemented and integrated with the Isolation Forest pipeline.
+
+The current model evaluation uses generated simulation datasets covering injection, missing message, payload tampering, unknown CAN ID and mixed traffic.
+
+The evaluation results are documented separately in the ML design and model evaluation documentation.
+
+Independent real-vehicle CAN capture validation remains outstanding.
