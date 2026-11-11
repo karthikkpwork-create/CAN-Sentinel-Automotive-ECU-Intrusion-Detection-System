@@ -1,16 +1,39 @@
+
 import argparse
 import csv
+import json
+import math
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, pstdev
 
 
 def as_number(value):
-    """Convert a CSV value to a number, or return None if it is empty/invalid."""
+    """Convert a CSV value to a number, or return None if empty/invalid."""
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def load_metadata(input_path):
+    """Load attack-event metadata associated with the input CSV."""
+    metadata_path = input_path.with_suffix(".events.json")
+
+    if not metadata_path.is_file():
+        print(
+            f"WARNING: Metadata file not found: {metadata_path}. "
+            "Only frame-level labels will be available."
+        )
+        return {}
+
+    with metadata_path.open("r", encoding="utf-8") as file:
+        metadata = json.load(file)
+
+    if not isinstance(metadata, dict):
+        raise ValueError("Invalid event metadata format.")
+
+    return metadata
 
 
 def extract_features(input_path, output_path, window_seconds):
@@ -18,6 +41,12 @@ def extract_features(input_path, output_path, window_seconds):
 
     if not input_path.is_file():
         raise FileNotFoundError(f"CSV file not found: {input_path}")
+
+    metadata = load_metadata(input_path)
+    events = metadata.get("events", [])
+
+    if not isinstance(events, list):
+        raise ValueError("Metadata events must be a list.")
 
     with input_path.open("r", newline="", encoding="utf-8-sig") as file:
         reader = csv.DictReader(file)
@@ -30,6 +59,7 @@ def extract_features(input_path, output_path, window_seconds):
             if "observed_timestamp" in reader.fieldnames
             else "timestamp"
         )
+
         can_id_column = (
             "can_id_hex"
             if "can_id_hex" in reader.fieldnames
@@ -38,6 +68,7 @@ def extract_features(input_path, output_path, window_seconds):
 
         if timestamp_column not in reader.fieldnames:
             raise ValueError("No recognized timestamp column was found.")
+
         if can_id_column not in reader.fieldnames:
             raise ValueError("No recognized CAN ID column was found.")
 
@@ -59,14 +90,33 @@ def extract_features(input_path, output_path, window_seconds):
                 "interval": as_number(
                     row.get("inter_arrival_s") or row.get("interval_s")
                 ),
+                "label": as_number(row.get("label")),
+                "attack_type": (row.get("attack_type") or "").strip(),
             })
 
     if not frames:
-        raise ValueError("No rows with valid timestamps and CAN IDs were found.")
+        raise ValueError(
+            "No rows with valid timestamps and CAN IDs were found."
+        )
 
     frames.sort(key=lambda frame: frame["timestamp"])
-    first_time = frames[0]["timestamp"]
-    start_time = (first_time // window_seconds) * window_seconds
+
+    # The first generated frame occurs at simulation time zero.
+    # Convert epoch timestamps into elapsed simulation seconds.
+    first_timestamp = frames[0]["timestamp"]
+
+    for frame in frames:
+        frame["elapsed_time"] = frame["timestamp"] - first_timestamp
+
+    # Determine how many windows must be generated.
+    duration = as_number(metadata.get("duration_seconds"))
+
+    if duration is None or duration <= 0:
+        duration = max(
+            frame["elapsed_time"] for frame in frames
+        ) + window_seconds
+
+    required_windows = math.ceil(duration / window_seconds)
 
     windows = defaultdict(
         lambda: {
@@ -76,41 +126,82 @@ def extract_features(input_path, output_path, window_seconds):
             "last_payload_by_id": {},
             "payload_comparisons": 0,
             "payload_changes": 0,
+            "frame_attack_types": set(),
         }
     )
+
+    # Create every time window, including windows affected by
+    # suppressed messages.
+    for window_index in range(required_windows):
+        windows[window_index]
+
     previous_timestamp_by_id = {}
 
     for frame in frames:
         can_id = frame["can_id"]
-        timestamp = frame["timestamp"]
-        window_index = int((timestamp - start_time) // window_seconds)
+        timestamp = frame["elapsed_time"]
+
+        window_index = int(timestamp // window_seconds)
+
+        if window_index >= required_windows:
+            continue
+
         window = windows[window_index]
 
         window["frame_count"] += 1
         window["can_ids"].add(can_id)
 
-        # Use the CSV interval when present. If it is empty, estimate it
-        # from timestamps for this CAN ID. These timestamps are assumed
-        # to be in seconds.
+        # Use recorded intervals, or estimate from timestamps.
         interval = frame["interval"]
+
         if interval is None and can_id in previous_timestamp_by_id:
-            interval = timestamp - previous_timestamp_by_id[can_id]
+            interval = (
+                frame["timestamp"] - previous_timestamp_by_id[can_id]
+            )
 
         if interval is not None and interval >= 0:
             window["intervals"].append(interval)
 
-        previous_timestamp_by_id[can_id] = timestamp
+        previous_timestamp_by_id[can_id] = frame["timestamp"]
 
+        # Preserve frame-level attack labels as a cross-check.
+        if frame["label"] is not None and frame["label"] == 1:
+            attack_type = frame["attack_type"] or "frame_label_attack"
+            window["frame_attack_types"].add(attack_type)
+
+        # Calculate payload changes.
         payload = frame["payload"]
+
         if payload:
             previous_payload = window["last_payload_by_id"].get(can_id)
 
             if previous_payload is not None:
                 window["payload_comparisons"] += 1
+
                 if payload != previous_payload:
                     window["payload_changes"] += 1
 
             window["last_payload_by_id"][can_id] = payload
+
+    # Validate and normalize event schedules.
+    normalized_events = []
+
+    for event in events:
+        start = as_number(event.get("start_time"))
+        end = as_number(event.get("end_time"))
+        attack_type = event.get("attack_type")
+
+        if start is None or end is None or not attack_type:
+            raise ValueError(f"Invalid attack event: {event}")
+
+        if end <= start:
+            raise ValueError(f"Invalid attack event time range: {event}")
+
+        normalized_events.append({
+            "start_time": start,
+            "end_time": end,
+            "attack_type": str(attack_type),
+        })
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,21 +215,56 @@ def extract_features(input_path, output_path, window_seconds):
         "iat_std",
         "payload_change_rate",
         "payload_comparisons",
+        "label",
+        "attack_type",
+        "missing_message_detected",
     ]
 
     with output_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=columns)
         writer.writeheader()
 
+
         for window_index in sorted(windows):
             window = windows[window_index]
             intervals = window["intervals"]
             comparisons = window["payload_comparisons"]
 
+            window_start = window_index * window_seconds
+            window_end = window_start + window_seconds
+
+            # Use event metadata as the ground-truth source.
+            # Use frame-level labels only if there are no scheduled events.
+            overlapping_types = set()
+
+            if normalized_events:
+                for event in normalized_events:
+                    overlaps = (
+                        event["start_time"] < window_end
+                        and event["end_time"] > window_start
+                    )
+
+                    if overlaps:
+                        overlapping_types.add(event["attack_type"])
+            else:
+                overlapping_types.update(window["frame_attack_types"])
+
+            missing_message_detected = int(
+                "missing_message" in overlapping_types
+            )
+
+            attack_types = (
+                "|".join(sorted(overlapping_types))
+                if overlapping_types
+                else "normal"
+            )
+
             writer.writerow({
-                "window_start_s": start_time + window_index * window_seconds,
+                "window_start_s": window_start,
                 "frame_count": window["frame_count"],
-                "frames_per_second": window["frame_count"] / window_seconds,
+                "frames_per_second": (
+                    window["frame_count"] / window_seconds
+                ),
                 "unique_id_count": len(window["can_ids"]),
                 "iat_mean": mean(intervals) if intervals else "",
                 "iat_std": pstdev(intervals) if intervals else "",
@@ -148,38 +274,56 @@ def extract_features(input_path, output_path, window_seconds):
                     else ""
                 ),
                 "payload_comparisons": comparisons,
+                "label": int(bool(overlapping_types)),
+                "attack_type": attack_types,
+                "missing_message_detected": missing_message_detected,
             })
 
+
     print(f"Read {len(frames)} valid frames; skipped {skipped_rows} rows.")
+    print(f"Created {len(windows)} feature windows.")
     print(f"Created feature CSV: {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract simple traffic features from a CAN CSV."
+        description="Extract CAN traffic features and window-level labels."
     )
-    parser.add_argument("input_csv", help="Path to the input CAN traffic CSV")
+
+    parser.add_argument(
+        "input_csv",
+        help="Path to the input CAN traffic CSV",
+    )
+
     parser.add_argument(
         "--output",
         help="Output path (default: data/features/<input-name>_features.csv)",
     )
+
     parser.add_argument(
         "--window-seconds",
         type=float,
         default=1.0,
         help="Window size in seconds (default: 1.0)",
     )
+
     args = parser.parse_args()
 
     if args.window_seconds <= 0:
         parser.error("--window-seconds must be greater than zero")
 
     input_path = Path(args.input_csv)
+
     output_path = args.output or (
-        Path("data/features") / f"{input_path.stem}_features.csv"
+        Path("data/features")
+        / f"{input_path.stem}_features.csv"
     )
 
-    extract_features(input_path, output_path, args.window_seconds)
+    extract_features(
+        input_path,
+        output_path,
+        args.window_seconds,
+    )
 
 
 if __name__ == "__main__":
