@@ -1,111 +1,128 @@
-# CAN-Sentinel - Dashboard & Frame Viewer
+# CAN-Sentinel Dashboard (Role D)
 
-## Overview
-A CSV-based CAN Frame Viewer built using Python and PyQt5 to display CAN frames in an interactive table for inspection and analysis.
+This directory contains the dashboard and monitoring layer for the CAN-Sentinel project. It is the Role D workstream: the interface that lets a user inspect CAN traffic, review activity patterns, and see alerts raised by the rule-based intrusion detector.
 
-## Key Features
-- Load CAN frame data from CSV files.
-- Save frames received during a live session to CSV.
-- Display timestamps, CAN IDs, DLC, and payload data.
-- Stretchable columns and alternating row colors for readability.
-- Monitor per-ID traffic volume and activity using the CAN ID Monitoring Panel.
-- Ready for integration with real-time monitors and intrusion detection alerts.
+The dashboard is designed for a lab environment. It can work from saved CSV captures without a physical interface, and it can also connect to a live virtual CAN feed (`vcan0`) through the local bridge.
 
-## Requirements
+## Role D scope
+
+Role D is responsible for the user-facing monitoring console. In the project plan, that includes:
+
+- loading synthetic CAN traffic from CSV files,
+- displaying frames and payload bytes with timestamps,
+- monitoring CAN IDs and message rates,
+- learning a baseline for normal traffic,
+- triggering alerts when suspicious behavior appears,
+- presenting alerts in a readable dashboard for demos and validation.
+
+This matches the team plan in the project brief:
+
+- Days 1 to 5: data generation, attack scenarios, and feature setup
+- Days 6 to 10: detector logic, dashboard integration, and demo validation
+- Day 11 onward: testing, final reporting, and presentation
+
+## What is in this directory
+
+- `dashboard.py` — main PyQt dashboard window
+- `frame_table.py` — lightweight standalone CSV frame viewer
+- `detector.py` — baseline rule-based intrusion detector
+- `id_monitor.py` — per-ID activity tracking
+- `id_chart.py` — busiest-ID and activity charts
+- `bridge_client.py` — client that connects to the live `vcan0` bridge
+- `vcan_bridge.py` — optional TCP bridge for reading live SocketCAN traffic
+- `csv_export.py` — live CSV recording and export helpers
+- `theme.py` and `style.py` — dark/light theme support and styling
+- `requirements.txt` — Python dependencies for the dashboard UI
+- `captures/` — saved capture files and demo outputs
+
+## Features
+
+The dashboard includes:
+
+- CSV frame loading for saved CAN traces
+- live traffic connection to a virtual `vcan0` interface
+- CAN-ID filtering and byte-level frame inspection
+- frame and alert counters
+- per-ID activity monitoring
+- message-rate and busiest-ID charts
+- alerts table with time, ID, type, and score
+- dark/light theme toggle
+- export of live captures to CSV
+- detector on/off and learning state controls
+
+The UI is intended for demonstration and validation rather than production automotive use.
+
+## Quick start
+
+From the repository root:
+
 ```bash
-pip install -r dashboard/requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r dashboard/requirements.txt
 ```
-Or directly:
+
+Launch the main dashboard:
+
 ```bash
-python -m pip install PyQt5 pandas pyqtgraph
+python dashboard/dashboard.py
 ```
 
-## How to Run
+Load a sample capture immediately:
 
-1. **Standalone Frame Table:**
-   ```bash
-   python dashboard/frame_table.py
-   ```
-   Click **Open CSV...** and select a dataset (e.g. from `data/samples/` or `data/generated/`).
-
-2. **Load CSV Directly via CLI:**
-   ```bash
-   python dashboard/frame_table.py data/samples/sample_sender_dry_run_seed42.csv
-   ```
-
-3. **Main Dashboard:**
-   ```bash
-   python dashboard/dashboard.py
-   ```
-## Live CAN Feed (vcan0 to Dashboard)
-
-The dashboard can show CAN frames live from a virtual CAN bus (`vcan0`).
-`vcan0` only exists inside Ubuntu (WSL), but the dashboard runs on Windows,
-so a small bridge program sends the frames between them.
-
-### How it works
-
-```
-cansend / attack script -> vcan0 (Ubuntu) -> vcan_bridge.py (Ubuntu)
-    -> TCP port 8765 -> bridge_client.py (Windows) -> dashboard.py
+```bash
+python dashboard/dashboard.py data/samples/sample_attack_dry_run_seed42.csv
 ```
 
-| File | Where it runs | What it does |
-|------|---------------|--------------|
-| `dashboard/vcan_bridge.py` | Ubuntu (WSL) | Reads frames from `vcan0` and sends each one as a line of JSON on port 8765 |
-| `dashboard/bridge_client.py` | Windows | Background thread that connects to the bridge and passes each frame to the dashboard |
-| `dashboard/dashboard.py` | Windows | Shows the frames in the table, the Frames loaded card and the message rate chart |
+Run only the simple table viewer:
 
-Each frame is sent as one JSON line, for example:
-
-```
-{"timestamp":1234567890.0,"can_id":"0x123","dlc":8,"data":"11 22 33 44 55 66 77 88","extended":false}
+```bash
+python dashboard/frame_table.py data/samples/sample_attack_dry_run_seed42.csv
 ```
 
-### Setup (after every PC restart)
+## Detector behavior
 
-`vcan0` is removed when WSL restarts, so create it again each time:
+The detector is implemented as a rule-based heuristic engine rather than a machine-learning model.
 
-```
+It can:
+
+- learn a baseline from normal traffic,
+- flag unknown CAN IDs,
+- detect unusually fast bursts,
+- detect unexpected payload changes,
+- detect missing messages over time.
+
+The dashboard exposes the detector state via the `Detector` button. It cycles through off, learning, and active detection modes. This makes the logic easy to inspect and explain in a lab demo.
+
+## Live dashboard flow
+
+To use the live feed, a Linux or WSL environment with SocketCAN is required.
+
+```bash
+python -m pip install python-can
 sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
-sudo ip link set up vcan0
+sudo ip link set up dev vcan0
 ```
 
-Python packages: `python-can` (Ubuntu), `PyQt5` and `pyqtgraph` (Windows).
+Start the bridge in one terminal:
 
-### Run
+```bash
+python dashboard/vcan_bridge.py
+```
 
-1. Ubuntu terminal 1: start the bridge.
-   ```
-   cd /mnt/d/Infotact_Internship/CAN-Sentinel-Automotive-ECU-Intrusion-Detection-System/dashboard
-   python3 vcan_bridge.py
-   ```
-   It prints `CAN bridge listening on port 8765`.
-2. Windows PowerShell: start the dashboard.
-   ```
-   cd D:\Infotact_Internship\CAN-Sentinel-Automotive-ECU-Intrusion-Detection-System\dashboard
-   python dashboard.py
-   ```
-3. Click **Start live**. The bottom line shows `Live: Connected`.
-4. Click **Save live CSV** to export frames received in the current live session.
-   The button shows the number of frames recorded.
-5. Ubuntu terminal 2: send frames.
-   ```
-   cansend vcan0 123#1122334455667788
-   ```
-   To send a steady stream (about 10 frames per second for 10 seconds):
-   ```
-   for i in $(seq 1 100); do cansend vcan0 123#1122334455667788; sleep 0.1; done
-   ```
+Then launch the dashboard and press `Start live`:
 
-### Notes
+```bash
+python dashboard/dashboard.py
+```
 
-- The bridge serves one client at a time. Restart the bridge if you close the dashboard and open it again.
-- The live table keeps the newest 5000 frames.
-- If the dashboard cannot connect, check that `vcan0` exists (`ip link show vcan0`) and that the bridge is running.
-- Opening a frames CSV stops live mode.
-- Detector alerts will appear in the Alerts panel when the detector calls `add_alert()`. The detector is not connected to the live feed yet.
+The bridge listens on TCP port `8765`, and the dashboard connects to `127.0.0.1:8765` by default. This is a lab-only setup and should be used only with a virtual CAN interface, never with a real vehicle bus.
 
-### Screenshot
-![alt text](image-1.png)
+## Notes for the team
+
+The project uses a branch-per-person workflow and merges through pull requests rather than pushing directly to `main`.
+
+The dashboard acts as the validation and demo surface for the attack simulation and detection pipeline. Its purpose is to make the synthetic CAN traffic and alert logic understandable, visible, and testable.
+
+For the full project setup and simulator commands, see the main project README in the repository root.
