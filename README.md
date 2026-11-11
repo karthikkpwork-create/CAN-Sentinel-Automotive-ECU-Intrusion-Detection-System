@@ -1,139 +1,156 @@
-# CAN-Sentinel: Automotive ECU Intrusion Detection System
+# CAN-Sentinel
 
-A four-week automotive cybersecurity project. **This repository currently contains Week 1 only**: a controlled *virtual* CAN environment that generates, transmits, independently captures and saves **normal synthetic** CAN traffic. No real vehicle, ECU or CAN hardware is involved or needed.
+CAN-Sentinel is a lab project for generating synthetic CAN traffic and viewing
+frames in a PyQt dashboard. All example ECU names, CAN IDs, and payloads are
+invented. Use only a virtual CAN interface (`vcanN`); this project is not for
+connecting to or testing a real vehicle.
 
-## Overview
+## What is in this checkout
 
-Automotive ECUs talk to each other over a CAN bus. To detect abnormal (possibly malicious) messages later, we first need a trustworthy picture of what *normal* traffic looks like. Week 1 builds that baseline in a lab on one Linux machine using SocketCAN's virtual interface `vcan0`.
+| Component | Status |
+|---|---|
+| Normal synthetic traffic simulator | Implemented; supports a no-interface dry run |
+| Synthetic attack traffic and labeled dataset generator | Implemented; dataset generation runs offline |
+| PyQt CSV viewer and dashboard | Implemented; CSV loading was exercised with a generated capture |
+| Live dashboard bridge for `vcan0` | Code is present; end-to-end live operation still needs validation on a configured `vcan0` |
+| Dashboard detector | Rule-based heuristic detector; it is not an Isolation Forest |
+| Isolation Forest training/inference pipeline | Not included in this checkout |
+| Independent Python/C CAN capture and sender/observer comparison tools | Not included in this checkout |
 
-## Status: implemented vs planned
+The dashboard details and controls are in [dashboard/README.md](dashboard/README.md).
 
-| Item | Status |
-|------|--------|
-| Virtual CAN setup script (`scripts/setup_vcan.sh`) | Implemented |
-| Normal traffic simulator (Python) | Implemented |
-| Python capture monitor | Implemented |
-| C capture program (SocketCAN raw socket) | Implemented |
-| CSV datasets (sender log, observed dataset) + comparison tool | Implemented |
-| Unit tests (no CAN needed) | Implemented |
-| Tests on a real `vcan0` | **To be run by you**, see `docs/week1_testing.md` |
-| Anomalous / attack traffic | Planned (Week 2) |
-| Isolation Forest anomaly detection | Planned (Week 3) |
-| Integration + PyQt dashboard | Planned (Week 4) |
+## Install
 
-## Week 1 objectives
-
-1. Create and verify `vcan0`.
-2. Send and receive a manual test frame.
-3. Generate normal synthetic traffic from simulated ECUs (engine, dashboard, temperature sensor, battery monitor). Their IDs and payloads are **invented for this lab, not from any real vehicle**.
-4. Capture the traffic with an independent process (Python and C).
-5. Save a reproducible dataset for Week 2.
-
-## Architecture
-
-```
-  Simulator (Python)                       Monitors (separate processes)
-  ┌───────────────────┐                   ┌────────────────────────────┐
-  │ engine_ecu   0x100│                   │ can_monitor.py  -> CSV     │
-  │ dashboard    0x200│──►  vcan0  ──────►│ can_capture (C) -> CSV     │
-  │ temperature  0x300│  (kernel virtual  │ candump (can-utils)        │
-  │ battery      0x400│   CAN interface)  └────────────────────────────┘
-  └─────────┬─────────┘
-            ▼
-     sender_log.csv                         observed_normal_traffic.csv
-     ("generated/transmitted")              ("independently observed")  <-- Week 2 input
-```
-
-Three counts are kept apart: **generated** (payload built), **transmitted** (kernel accepted the send), **observed** (another process read it). `src/utils/compare_logs.py` checks the last against the second.
-
-## Technologies
-
-Linux SocketCAN, `vcan`, `can-utils`, Python 3 (standard library only), C (GCC, raw SocketCAN socket), Git/GitHub, CSV/JSON. About libpcap: see "Capture method" in `docs/week1_fundamentals.md`.
-
-## Prerequisites
-
-Ubuntu 22.04/24.04 (native or VM) with sudo. Windows PowerShell alone cannot do this; use an Ubuntu VM. Default WSL2 kernels often lack `vcan`.
+From the repository root, create an environment and install the dashboard
+dependencies:
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential git python3 python3-venv iproute2 can-utils linux-libc-dev
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r dashboard/requirements.txt
 ```
 
-## Installation
+The simulators use the Python standard library. The live bridge additionally
+needs `python-can` in the environment where the bridge runs:
 
 ```bash
-git clone <your-repo-url> CAN-Sentinel && cd CAN-Sentinel
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt     # no third-party packages needed in Week 1
-make test                           # unit tests, no CAN needed
-make c                              # builds bin/can_capture
+python -m pip install python-can
 ```
 
-## Setup: virtual CAN
+## Run a safe offline demo
+
+Generate a short synthetic normal-traffic CSV. Dry-run mode sends nothing and
+does not require a CAN interface:
 
 ```bash
-sudo scripts/setup_vcan.sh up       # create and bring up vcan0
-scripts/setup_vcan.sh status        # inspect it
-sudo scripts/setup_vcan.sh down     # remove it when finished
+python3 -m src.simulator.normal_traffic_simulator \
+  --config config/config.example.json \
+  --dry-run --duration 3 --seed 42 \
+  --output data/generated/dashboard_demo.csv
 ```
 
-## Manual CAN test
+Open that file in the main dashboard:
 
 ```bash
-# Terminal 1 (start first)        # Terminal 2
-candump vcan0                     cansend vcan0 123#DEADBEEF
+python dashboard/dashboard.py data/generated/dashboard_demo.csv
 ```
-Expected (spacing varies): `vcan0  123   [4]  DE AD BE EF`.
 
-## Simulator usage
+You can also open a CSV from the dashboard's **Open frames CSV...** button, or
+run the simpler standalone frame table:
 
 ```bash
-python3 -m src.simulator.normal_traffic_simulator --config config/config.example.json --duration 10
-python3 -m src.simulator.normal_traffic_simulator --dry-run --duration 3    # no interface needed
+python dashboard/frame_table.py data/generated/dashboard_demo.csv
 ```
-Options: `--interface`, `--duration`, `--seed`, `--output`, `--dry-run`, `--log-level`. Every setting in the JSON config is explained in `docs/week1_setup.md`.
 
-## Capture usage
+The checked-in sample capture is
+[`data/samples/sample_attack_dry_run_seed42.csv`](data/samples/sample_attack_dry_run_seed42.csv).
+It is synthetic dry-run data, not a live capture.
+
+## Generate labeled datasets offline
+
+This command creates normal, injection, unknown-ID, payload-tampering,
+missing-message, and mixed datasets without transmitting CAN frames:
 
 ```bash
-python3 -m src.capture.can_monitor --config config/config.example.json --save   # Python
-./bin/can_capture -i vcan0 -o data/generated/observed_c.csv                      # C
+python scripts/generate_datasets.py \
+  --duration 5 --seed 42 \
+  --output-dir data/generated/demo
 ```
 
-One-command demo (monitor first, then simulator, then comparison):
+The output directory includes CSV files and ground-truth attack windows.
+Missing-message scenarios also have a separate suppressed-frame CSV because a
+suppressed frame does not appear in the main traffic stream.
+
+## Live dashboard on a virtual CAN bus
+
+Live mode requires Linux/WSL with the `vcan` kernel module and permission to
+create a virtual interface. In the Linux terminal:
 
 ```bash
-scripts/run_demo.sh 10
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up dev vcan0
+python dashboard/vcan_bridge.py
 ```
 
-## Dataset format
+Start the dashboard on the same host and select **Start live**:
 
-* `data/generated/sender_log.csv` (from the simulator): `timestamp, ecu_name, message_name, can_id, can_id_hex, dlc, payload_hex, interval_s, status, source`
-* `data/generated/observed_normal_traffic.csv` (from the monitor): `observed_timestamp, can_id, can_id_hex, ecu_name, message_name, dlc, payload_hex, inter_arrival_s, frame_flags, source`
+```bash
+python dashboard/dashboard.py
+```
 
-Timestamps come from each program's own clock. `ecu_name`/`message_name` in the observed file come from looking up the CAN ID in the config (the bus itself carries no names). The C program leaves those two columns empty.
-`data/samples/` holds a small **dry-run** sample (seed 42), which was generated by the simulator without sending anything; it is *not* captured traffic.
+To produce benign synthetic frames on the virtual bus, use another terminal:
 
-## Testing
+```bash
+python3 -m src.simulator.normal_traffic_simulator \
+  --config config/config.example.json --interface vcan0 --duration 10
+```
 
-Unit tests: `make test`. Hardware-free tests cannot prove `vcan0` works; follow the full plan in `docs/week1_testing.md` and record your real results there.
+The bridge listens on TCP port `8765` and the dashboard client connects to
+`127.0.0.1:8765` by default. The bridge currently binds to all network
+interfaces; run it only in a trusted lab environment and restrict network
+access to the port. A live `vcan0` session has not been validated as part of
+this checkout's verification.
 
-## Troubleshooting
+## Dashboard features
 
-See `docs/week1_troubleshooting.md`.
+- Load frame CSV files and inspect individual frame bytes.
+- Filter frames by one or more CAN IDs.
+- View frame and alert counters, per-ID activity, message-rate and ID charts.
+- Load an alerts CSV, display detector alerts, and export frames recorded in a
+  live session.
+- Toggle dark/light themes.
 
-## Known limitations
+The **Add test alert** button creates a UI-only sample alert; it does not
+represent a detector result.
 
-* Classical CAN only: standard 11-bit IDs, payload at most 8 bytes. No CAN FD.
-* Synthetic data: the IDs and signals are invented and simpler than real vehicle traffic.
-* Python timing is software-scheduled, so intervals jitter by a millisecond or so under load.
-* The `vcan0` tests have not been run by the author of this repo skeleton; results are yours to record.
-* The simulator is limited to `vcanN` interfaces by design.
+## Detector and ML status
 
-## Future stages
+`dashboard/detector.py` contains a basic rule-based detector. It can learn a
+baseline from live frames and check for unfamiliar IDs, unusually fast frames,
+payload length/value changes, and missing messages. Its thresholds are
+heuristics. This checkout does not include a trained Isolation Forest or an
+ML feature-extraction/training/inference pipeline.
 
-Week 2 controlled anomalous traffic and feature engineering; Week 3 Isolation Forest; Week 4 integration and PyQt dashboard.
+## Tests
 
-## Documentation
+Install `pytest` in the active environment, then run the focused, hardware-free
+tests:
 
-`docs/week1_fundamentals.md`, `week1_setup.md`, `week1_testing.md`, `week1_troubleshooting.md`, `week1_git.md`, `week1_progress.md`, `week1_summary.md`.
+```bash
+python -m pip install pytest
+QT_QPA_PLATFORM=offscreen python -m pytest -q \
+  tests/test_attack_simulator.py \
+  dashboard/test_detector.py \
+  dashboard/test_id_monitor.py
+```
+
+Some other `dashboard/test_*.py` files are standalone scripts rather than
+pytest tests; avoid running the entire dashboard test directory blindly.
+
+## Current checkout limitations
+
+There is no top-level `Makefile` or `requirements.txt` in this checkout.
+`scripts/setup_vcan.sh`, `scripts/run_demo.sh`, the independent capture
+programs, and the sender/observer comparison tool are also not present. Set up
+`vcan0` manually as above if you want to test the live bridge.
