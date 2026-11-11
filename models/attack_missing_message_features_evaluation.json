@@ -1,0 +1,17 @@
+{
+  "test_dataset": "data/features/attack_missing_message_features.csv",
+  "threshold": 0.5094646190632834,
+  "metrics": {
+    "total_test_windows": 60,
+    "normal_windows": 45,
+    "attack_windows": 15,
+    "true_negatives": 33,
+    "false_positives": 12,
+    "false_negatives": 0,
+    "true_positives": 15,
+    "precision": 0.5555555555555556,
+    "recall": 1.0,
+    "f1_score": 0.7142857142857143,
+    "false_positive_rate": 0.26666666666666666
+  }
+}
