@@ -2,117 +2,170 @@
 
 ## 1. Objective
 
-The ML component will identify unusual CAN traffic patterns for investigation.
-Isolation Forest is a future candidate for detecting anomalies; it will
-complement explainable traffic rules.
+The ML component identifies unusual CAN traffic patterns for investigation.
+It complements rule-based traffic monitoring by using time-window-based
+features and an Isolation Forest anomaly detector.
 
-## 2. Scope
+An anomaly is an indication for further investigation, not proof of a
+cyberattack.
 
-Current work covers repository and CSV inspection, data-quality review,
-feature planning, and a proposed evaluation strategy. Model training and
-performance measurement have not been performed.
+## 2. Implementation Status
 
-## 3. Dataset Inventory
+The following ML components have been implemented:
 
-| Dataset | Purpose | Status |
-| --- | --- | --- |
-| `data/samples/sample_attack_dry_run_seed42.csv` | Initial inspection | Present; 446-row synthetic dry-run sample |
-| `data/generated/observed_normal_traffic.csv` | Candidate observed-normal data | Missing when checked |
-| Independently captured labelled attack data | Future evaluation | Not available in this checkout |
+- CAN traffic feature extraction using fixed time windows.
+- Normal and attack traffic dataset generation for simulation.
+- Isolation Forest training using normal traffic windows.
+- Threshold calibration using normal validation windows.
+- Prediction and evaluation across five traffic scenarios.
+- Saved model, detector configuration, evaluation metrics and prediction files.
 
-The sample has 157 normal rows and 289 attack rows: 251 injection,
-12 payload-tampering, and 26 unknown-ID rows. Label `0` is normal; label `1`
-is attack.
+The implementation has been tested with generated simulation datasets.
+Independent real-vehicle CAN capture validation remains outstanding.
 
-## 4. Input Data
+## 3. ML Workflow
 
-The inspected sample columns are:
-`timestamp`, `ecu_name`, `message_name`, `can_id`, `can_id_hex`, `dlc`,
-`payload_hex`, `interval_s`, `status`, `source`, `label`, `attack_type`.
+1. Generate normal and simulated attack CAN traffic.
+2. Extract numerical features from traffic records using one-second windows.
+3. Prepare normal-only training and validation feature windows.
+4. Train the Isolation Forest detector on normal training windows.
+5. Calculate anomaly scores for normal validation windows.
+6. Select the anomaly threshold using the 95th percentile of validation scores.
+7. Evaluate predictions against labelled simulated scenarios.
+8. Save the trained model, configuration, evaluation metrics and predictions.
 
-This is a simulator-side sample, not an independent capture. The documented
-observed-traffic file was not available to inspect. Five rows have an empty
-`interval_s`; the other inspected columns have no empty values.
+## 4. Input Data and Dataset Scope
 
-The simulator's dry-run code writes synthetic timestamps in seconds with six
-fractional digits. This does not verify the clock used by an independent
-capture monitor.
+The ML pipeline uses generated CAN traffic and extracted feature datasets.
 
-## 5. Proposed Features
+The earlier repository inspection included
+`data/samples/sample_attack_dry_run_seed42.csv`, a 446-row synthetic
+dry-run sample. That sample was useful for initial inspection but is not
+the sole basis for the current model evaluation.
+
+Current evaluation covers these scenarios:
+
+- Injection
+- Missing message
+- Payload tampering
+- Unknown CAN ID
+- Mixed traffic
+
+The current evaluation datasets contain 60 feature windows per scenario.
+The four individual attack scenarios contain 45 normal and 15 attack
+windows each. The mixed-traffic scenario contains 27 normal and 33 attack
+windows.
+
+These are simulated datasets, not independently captured vehicle traffic.
+
+## 5. Extracted Features
+
+The feature extractor calculates the following values for each non-empty
+time window:
 
 | Feature | Definition | Possible use |
 | --- | --- | --- |
-| `frame_count` | Frames in a fixed time window | Traffic-volume changes |
+| `frame_count` | Number of CAN frames in the window | Traffic-volume changes |
 | `frames_per_second` | Frame count divided by window duration | Possible flooding |
-| `unique_id_count` | Distinct CAN IDs in a window | Message-diversity changes |
-| `iat_mean` | Mean interval between frames of one ID | Timing deviations |
-| `iat_std` | Variation in intervals for one ID | Irregular timing |
-| `payload_change_rate` | Fraction of comparable consecutive same-ID payloads that differ | Unusual payload changes |
+| `unique_id_count` | Number of distinct CAN IDs in the window | Message-diversity changes |
+| `iat_mean` | Mean inter-arrival time | Timing deviations |
+| `iat_std` | Standard deviation of inter-arrival time | Irregular timing |
+| `payload_change_rate` | Fraction of comparable consecutive same-ID payload pairs that differ | Unusual payload changes |
+| `payload_comparisons` | Number of valid payload comparisons | Interpretation of payload-change rate |
 
-These are proposed features and must be validated against captured data. Do not
-use `label` or `attack_type` as model inputs; keep them for evaluation.
-Check unexpected IDs separately against an approved configuration allowlist.
-That configuration is not available in this checkout.
+The Isolation Forest model uses five features:
 
-## 6. Proposed Model and Evaluation
+- `frames_per_second`
+- `unique_id_count`
+- `iat_mean`
+- `iat_std`
+- `payload_change_rate`
 
-In the future, fit Isolation Forest on normal traffic windows. Choose its
-anomaly threshold using separate validation data. Evaluate on held-out traffic
-and compare with a deterministic traffic-rate rule.
+`frame_count` and `payload_comparisons` are retained as extracted
+features but are not model inputs. Ground-truth labels and attack-type
+annotations are used for evaluation, not as model inputs.
 
-When independently labelled attack data is available, report precision,
-recall, F1-score, false-positive rate, confusion matrix, and detection latency
-if measurable. No performance results are available yet.
+## 6. Model and Evaluation Strategy
 
-## 7. Data Split
+The implemented detector uses Isolation Forest.
 
-Separate training, validation, and test data by capture session or
-non-overlapping time periods. Do not use overlapping windows across training
-and test. Record the final split and random seed when data is available.
+- Training data: normal traffic windows only.
+- Number of estimators: 200.
+- Random state: 42.
+- Training windows: 40.
+- Normal validation windows: 20.
+- Threshold quantile: 95th percentile.
+- Threshold: 0.5094646190632834.
 
-## 8. Limitations and Blockers
+The anomaly score is calculated as:
 
-The inspected data is synthetic and does not establish real-world detector
-performance. `data/generated/observed_normal_traffic.csv` is missing. The
-attack simulator imports `src.simulator.normal_traffic_simulator`, which is
-also missing from this checkout. Capture code and configuration files were
-unavailable, so capture timing and ECU-to-ID mappings remain unverified.
+`anomaly_score = -IsolationForest.score_samples(X)`
 
-## 9. Inspection Findings
+A higher score indicates more anomalous behaviour.
 
-- Environment: Windows PowerShell.
-- CSV: `data/samples/sample_attack_dry_run_seed42.csv`.
-- Rows: 446.
-- CAN IDs occur in decimal and hexadecimal columns.
-- Payloads are hexadecimal strings.
-- Five `interval_s` values are empty.
-- Data source: synthetic attack-simulator dry run, not observed capture.
+The prediction rule is:
 
+- `ANOMALY` when the anomaly score is greater than the threshold.
+- `NORMAL` otherwise.
 
+Evaluation reports confusion-matrix counts, precision, recall, F1-score
+and false-positive rate.
 
-## Data Inventory
+## 7. Evaluation Results
 
-| Item | Finding |
-| --- | --- |
-| Dataset path | `data/samples/sample_attack_dry_run_seed42.csv` |
-| Data source | Synthetic attack simulator dry run; mixed mode, seed 42 |
-| Number of rows | 446 |
-| Column names | `timestamp`, `ecu_name`, `message_name`, `can_id`, `can_id_hex`, `dlc`, `payload_hex`, `interval_s`, `status`, `source`, `label`, `attack_type` |
-| Timestamp field | `timestamp` |
-| Timestamp units | Seconds in the synthetic dry-run simulator code; the independent capture clock is not verified |
-| Empty values | 5 empty `interval_s` values; 0 in each other inspected column |
-| Label columns | `label` and `attack_type` |
-| Label meanings | `0` = normal; `1` = attack. Attack types found: injection (251), payload tampering (12), unknown ID (26) |
-| Suitable for training? | No for the planned normal-only model training; this is a small synthetic mixed-traffic sample |
-| Suitable for evaluation? | Pending for final evaluation; it can support preliminary checks, but is not independently captured test data |
-| Outstanding issues | The observed-normal CSV, capture code, and configuration files were unavailable. Verify decimal/hex CAN ID agreement and DLC/payload-length agreement before feature extraction. |
+| Scenario | Precision | Recall | F1-score | False-positive rate |
+| --- | ---: | ---: | ---: | ---: |
+| Injection | 57.69% | 100.00% | 73.17% | 24.44% |
+| Missing message | 55.56% | 100.00% | 71.43% | 26.67% |
+| Payload tampering | 31.25% | 33.33% | 32.26% | 24.44% |
+| Unknown CAN ID | 57.69% | 100.00% | 73.17% | 24.44% |
+| Mixed traffic | 84.38% | 81.82% | 83.08% | 18.52% |
 
-### Feature extraction checks
+The mixed-traffic scenario has the highest F1-score in this evaluation.
+Payload tampering has the weakest detection performance and requires
+further investigation.
 
-- Input: `data/samples/sample_attack_dry_run_seed42.csv` (synthetic dry-run sample).
-- Valid frames read: 446; skipped: 0.
-- Feature output: 10 one-second windows with 8 columns.
-- Empty cells: 0; non-finite numeric values: 0.
-- Repeatability: two runs produced the same SHA-256 hash: `A217DF62407AA5FFB366E59936223C49C3C391896AC8741274A01B189AF5EC1B`.
-- Limitation: `data/generated/observed_normal_traffic.csv` was unavailable, so real-capture processing has not been verified.
-- Input-validation limitation: the current extractor skips rows with missing or invalid timestamps or CAN IDs and reports the skipped count. Failing with an error for such rows remains to be implemented and checked.
+These results describe the current simulated datasets only. They do not
+establish real-world vehicle detection performance.
+
+## 8. Data Split and Validation Considerations
+
+The current model configuration uses 40 normal windows for training and
+20 normal windows for threshold validation.
+
+These windows originate from the current generated normal-traffic
+simulation. They are not an independent capture-session validation set.
+
+Further validation should use separate normal capture sessions and
+independently labelled attack traffic. Capture-session separation is
+important for measuring generalization beyond the simulation used to
+develop the detector.
+
+## 9. Limitations and Future Work
+
+- Current evaluation uses simulated traffic, not independent vehicle CAN captures.
+- The false-positive rates show that additional tuning and validation are needed.
+- Payload-tampering detection is weak with the current feature set.
+- Unknown-ID detection should be strengthened with an approved CAN-ID allowlist.
+- Missing-message detection should use expected ECU message schedules and timing.
+- Training and validation should be repeated using independent capture sessions.
+- Detection latency should be measured in a suitable live capture environment.
+- The capture monitor requires Linux SocketCAN. A working `vcan` interface
+  was not available in the current WSL2 environment, so live capture
+  validation remains incomplete.
+
+## 10. Reproducibility Artefacts
+
+The repository includes:
+
+- `models/can_sentinel_isolation_forest.joblib` — trained model.
+- `models/detector_config.json` — model features and threshold configuration.
+- `models/*_features_evaluation.json` — scenario evaluation metrics.
+- `models/*_features_predictions.csv` — per-window prediction outputs.
+- `requirements.txt` — pinned Python dependencies.
+- `src/ml/` — feature extraction, training and prediction implementation.
+
+The model was successfully loaded from the project virtual environment
+and produced an anomaly score and prediction for a test input.
+That smoke test verifies model loading and inference execution; it is
+not an additional performance evaluation.
