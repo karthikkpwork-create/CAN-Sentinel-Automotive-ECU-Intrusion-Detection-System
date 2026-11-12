@@ -24,9 +24,10 @@ FEATURES = [
     "iat_std",
     "payload_change_rate",
 ]
+OPTIONAL_FEATURES = {"iat_mean", "iat_std", "payload_change_rate"}
 
 
-def load_features(path, require_labels=True):
+def load_features(path, require_labels=False):
     """Load, validate and return feature values and optional labels."""
     path = Path(path)
 
@@ -59,14 +60,16 @@ def load_features(path, require_labels=True):
         converted = []
 
         for name in FEATURES:
-            raw = row.get(name, "")
-
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"{path}, row {row_number}: invalid {name}={raw!r}"
-                )
+            raw = (row.get(name) or "").strip()
+            if name in OPTIONAL_FEATURES and not raw:
+                value = 0.0
+            else:
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"{path}, row {row_number}: invalid {name}={raw!r}"
+                    )
 
             if not math.isfinite(value):
                 raise ValueError(
@@ -108,7 +111,9 @@ def load_features(path, require_labels=True):
     X = np.asarray(values, dtype=float)
     y = np.asarray(labels, dtype=int) if require_labels else None
 
-    return rows, X, y
+    if require_labels:
+        return rows, X, y
+    return rows, X
 
 
 def validate_normal_only(y, path, description):
@@ -220,12 +225,16 @@ def main():
         parser.error("--threshold-quantile must be between 0 and 1.")
 
     # Load and validate training data.
-    train_rows, X_train, y_train = load_features(args.train)
+    train_rows, X_train, y_train = load_features(
+        args.train,
+        require_labels=True,
+    )
     validate_normal_only(y_train, args.train, "Training")
 
     # Load and validate normal validation data.
     validation_rows, X_validation, y_validation = load_features(
-        args.validation
+        args.validation,
+        require_labels=True,
     )
     validate_normal_only(y_validation, args.validation, "Validation")
 
@@ -297,7 +306,10 @@ def main():
 
     # Evaluate against a separate labelled test dataset, if supplied.
     if args.test:
-        test_rows, X_test, y_test = load_features(args.test)
+        test_rows, X_test, y_test = load_features(
+            args.test,
+            require_labels=True,
+        )
 
         test_scores = -model.score_samples(X_test)
         y_pred = (test_scores > threshold).astype(int)

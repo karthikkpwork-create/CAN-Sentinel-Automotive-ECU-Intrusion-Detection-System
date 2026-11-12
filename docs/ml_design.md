@@ -150,9 +150,9 @@ develop the detector.
 - Missing-message detection should use expected ECU message schedules and timing.
 - Training and validation should be repeated using independent capture sessions.
 - Detection latency should be measured in a suitable live capture environment.
-- The capture monitor requires Linux SocketCAN. A working `vcan` interface
-  was not available in the current WSL2 environment, so live capture
-  validation remains incomplete.
+- The capture monitor requires Linux SocketCAN. The offline ML evaluation
+  does not validate live capture or detection latency, so independent live
+  capture validation remains incomplete.
 
 ## 10. Reproducibility Artefacts
 
