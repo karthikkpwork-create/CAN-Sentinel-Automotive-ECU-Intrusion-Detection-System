@@ -306,7 +306,9 @@ Main controls and features include:
 - Toggling dark and light themes.
 - Cycling the rule detector through off, learning, and active states.
 
-The **Add test alert** action creates a UI-only demonstration alert. It does not invoke the detector.
+Live rule-based alerts are disabled by default. To enable them, start live mode, click **Detector: Off** once to begin learning, send at least 12 seconds of normal traffic, then click **Learning...** again and verify the button says **Detector: On** before starting an attack.
+
+The **Add test alert** action creates four UI-only demonstration alerts (injection, unknown ID, payload tampering, and missing message), each with a different CAN ID. It does not invoke the detector.
 
 See [`dashboard/README.md`](dashboard/README.md) for dashboard-specific details.
 
@@ -351,6 +353,39 @@ python dashboard/dashboard.py
 ```
 
 The bridge listens on TCP port `8765` and the dashboard connects to `127.0.0.1:8765` by default. The bridge binds to all network interfaces, so it should only run in a trusted lab network with restricted access.
+
+### Generate different live alert types
+
+With the bridge running and the dashboard connected to `vcan0`, learn a normal baseline first:
+
+1. Click **Detector: Off** in the dashboard.
+2. Run normal traffic for at least 12 seconds:
+
+   ```bash
+   python3 -u -m src.simulator.normal_traffic_simulator \
+     --config config/config.example.json \
+     --interface vcan0 --duration 12 --seed 42
+   ```
+
+3. Click **Learning...** again and confirm that the button changes to **Detector: On**.
+4. Run one attack scenario at a time from the repository root:
+
+   ```bash
+   python3 -u -m src.simulator.attack_traffic_simulator --config config/config.example.json --interface vcan0 --attack injection --duration 40 --attack-start 15 --attack-duration 20 --seed 42
+   python3 -u -m src.simulator.attack_traffic_simulator --config config/config.example.json --interface vcan0 --attack unknown_id --duration 40 --attack-start 15 --attack-duration 20 --seed 42
+   python3 -u -m src.simulator.attack_traffic_simulator --config config/config.example.json --interface vcan0 --attack payload_tampering --duration 40 --attack-start 15 --attack-duration 20 --seed 42
+   python3 -u -m src.simulator.attack_traffic_simulator --config config/config.example.json --interface vcan0 --attack missing_message --duration 40 --attack-start 15 --attack-duration 20 --seed 42
+   ```
+
+   Or run the scheduled mixed scenario:
+
+   ```bash
+   python3 -u -m src.simulator.attack_traffic_simulator \
+     --config config/config.example.json \
+     --interface vcan0 --attack mixed --duration 120 --seed 42
+   ```
+
+The simulator sends CAN frames, not alert labels. The dashboard infers suspicious behavior with heuristic rules, so an attack scenario may produce a different alert type or no alert. The bridge's `interval anomaly` alerts are separate from the dashboard detector's rule-based alerts. Use these commands only with the virtual `vcan0` interface, never a real vehicle bus.
 
 ## Rule-based detector
 
