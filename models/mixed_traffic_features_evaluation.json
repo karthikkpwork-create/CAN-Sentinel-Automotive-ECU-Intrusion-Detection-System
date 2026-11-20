@@ -1,0 +1,17 @@
+{
+  "test_dataset": "data/features/mixed_traffic_features.csv",
+  "threshold": 0.5094646190632834,
+  "metrics": {
+    "total_test_windows": 60,
+    "normal_windows": 27,
+    "attack_windows": 33,
+    "true_negatives": 22,
+    "false_positives": 5,
+    "false_negatives": 6,
+    "true_positives": 27,
+    "precision": 0.84375,
+    "recall": 0.8181818181818182,
+    "f1_score": 0.8307692307692308,
+    "false_positive_rate": 0.18518518518518517
+  }
+}

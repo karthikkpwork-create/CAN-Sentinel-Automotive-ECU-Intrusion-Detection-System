@@ -1,0 +1,9 @@
+# Week 1 (simulator, monitor, capture) uses only the Python standard library.
+# The detector (src/detector/detector.py) needs the packages below.
+# Tested only with Python 3.13, pandas 3.0.5, scikit-learn 1.9.1, joblib 1.6.0.
+# The ">=" minimums below are untested guesses; pin exact versions once the team agrees.
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4
+numpy>=1.26
+# The PyQt dashboard has its own list: dashboard/requirements.txt

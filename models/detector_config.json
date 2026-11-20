@@ -1,0 +1,18 @@
+{
+  "features": [
+    "frames_per_second",
+    "unique_id_count",
+    "iat_mean",
+    "iat_std",
+    "payload_change_rate"
+  ],
+  "threshold": 0.5094646190632834,
+  "threshold_quantile": 0.95,
+  "n_estimators": 200,
+  "random_state": 42,
+  "training_rows": 40,
+  "validation_rows": 20,
+  "sklearn_version": "1.9.1",
+  "score_definition": "anomaly_score = -IsolationForest.score_samples(X)",
+  "alert_rule": "ANOMALY if anomaly_score > threshold, otherwise NORMAL"
+}
