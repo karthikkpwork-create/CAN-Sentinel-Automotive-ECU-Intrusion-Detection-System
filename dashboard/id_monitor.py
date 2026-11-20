@@ -49,8 +49,15 @@ class CanIdMonitorPanel(QWidget):
         self._stats.clear()
         self.table.setRowCount(0)
 
-    def record_frame(self, frame):
-        """Record one frame into the live ID statistics."""
+    def record_frames(self, frames):
+        """Record a batch of frames and refresh the table once."""
+        for frame in frames:
+            self._record_frame(frame)
+        if frames:
+            self._refresh()
+
+    def _record_frame(self, frame):
+        """Update frame statistics without refreshing the table."""
         can_id = normalize_can_id(frame.get("can_id", ""))
         if not can_id:
             return
@@ -66,22 +73,31 @@ class CanIdMonitorPanel(QWidget):
                 "first_seen": timestamp,
                 "last_seen": timestamp,
                 "last_interval": None,
-                "intervals": [],
+                "interval_total": 0.0,
+                "interval_count": 0,
             }
 
         stats = self._stats[can_id]
         stats["count"] = int(stats["count"]) + 1
-        if stats["first_seen"] is None or (timestamp is not None and stats["first_seen"] is not None and timestamp < float(stats["first_seen"])):
+        if stats["first_seen"] is None or (
+            timestamp is not None
+            and stats["first_seen"] is not None
+            and timestamp < float(stats["first_seen"])
+        ):
             stats["first_seen"] = timestamp
 
         if timestamp is not None and stats["last_seen"] is not None:
             interval = timestamp - float(stats["last_seen"])
             if interval >= 0:
                 stats["last_interval"] = interval
-                stats["intervals"].append(interval)
+                stats["interval_total"] = float(stats["interval_total"]) + interval
+                stats["interval_count"] = int(stats["interval_count"]) + 1
 
         stats["last_seen"] = timestamp
-        self._refresh()
+
+    def record_frame(self, frame):
+        """Record one frame into the live ID statistics."""
+        self.record_frames([frame])
 
     def load_rows(self, rows, header):
         """Load a CSV snapshot and rebuild the monitor from it."""
@@ -90,6 +106,7 @@ class CanIdMonitorPanel(QWidget):
         can_name = "can_id_hex" if "can_id_hex" in lower else "can_id"
         can_idx = lower.index(can_name) if can_name in lower else None
         time_idx = lower.index("timestamp") if "timestamp" in lower else None
+        frames = []
         for row in rows:
             if can_idx is None:
                 continue
@@ -102,7 +119,8 @@ class CanIdMonitorPanel(QWidget):
                     frame["timestamp"] = float(row[time_idx])
                 except (TypeError, ValueError):
                     frame["timestamp"] = None
-            self.record_frame(frame)
+            frames.append(frame)
+        self.record_frames(frames)
 
     def _status_for(self, can_id: str, stats: Dict[str, object]) -> str:
         last_seen = stats.get("last_seen")
@@ -125,8 +143,11 @@ class CanIdMonitorPanel(QWidget):
         rows = []
         for can_id, stats in self._stats.items():
             count = int(stats["count"])
-            intervals = list(stats.get("intervals", []))
-            mean_gap = sum(intervals) / len(intervals) if intervals else 0.0
+            interval_count = int(stats["interval_count"])
+            mean_gap = (
+                float(stats["interval_total"]) / interval_count
+                if interval_count else 0.0
+            )
             first_seen = stats.get("first_seen")
             last_seen = stats.get("last_seen")
             elapsed = 1.0

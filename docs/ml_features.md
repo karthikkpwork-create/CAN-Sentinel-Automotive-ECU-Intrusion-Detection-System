@@ -66,7 +66,11 @@ The calculation is:
 
 `payload_change_rate = changed_payload_pairs / valid_payload_comparisons`
 
-When there are no valid comparisons, the rate is set to zero. This does not prove that the payload remained unchanged; it indicates insufficient comparison data.
+When there are no valid comparisons, the extractor leaves the rate blank and
+sets `payload_comparisons` to zero. The ML input loader fills blank timing and
+payload-rate features with zero so they can be scored. This is an imputation,
+not evidence that the payload remained unchanged; use the comparison count to
+identify insufficient payload data.
 
 ## 7. Output
 

@@ -45,10 +45,14 @@ The dashboard includes:
 - frame and alert counters
 - per-ID activity monitoring
 - message-rate and busiest-ID charts
+- automatic byte detail for the first visible live frame
 - alerts table with time, ID, type, and score
 - dark/light theme toggle
 - export of live captures to CSV
+- batched live-feed updates to keep the dashboard responsive during bursts
+- bounded live frame and alert history, with cumulative session counters
 - detector on/off and learning state controls
+- four UI-only sample alerts with different CAN IDs from **Add test alert**
 
 The UI is intended for demonstration and validation rather than production automotive use.
 
@@ -92,7 +96,9 @@ It can:
 - detect unexpected payload changes,
 - detect missing messages over time.
 
-The dashboard exposes the detector state via the `Detector` button. It cycles through off, learning, and active detection modes. This makes the logic easy to inspect and explain in a lab demo.
+The dashboard exposes the detector state via the `Detector` button. It is off by default. Start live mode, click **Detector: Off**, send at least 12 seconds of normal traffic, then click **Learning...** again and confirm **Detector: On** before starting an attack scenario. See the [root README](../README.md#generate-different-live-alert-types) for commands to produce each simulated scenario.
+
+The simulator sends CAN frames, not alert labels. The dashboard infers suspicious behavior with heuristics, so a scenario may produce a different alert type or no alert. Bridge `interval anomaly` alerts are separate from dashboard rule-based alerts. The **Add test alert** button instead adds four UI-only sample categories with different CAN IDs; it does not invoke the detector or send traffic.
 
 ## Live dashboard flow
 

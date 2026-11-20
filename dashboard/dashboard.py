@@ -27,6 +27,7 @@ from style import extra_qss, get_colors          # extra look, works on top of t
 ALERT_COLUMNS = ["Time", "ID", "Type", "Score"]
 LIVE_COLUMNS = ["timestamp", "can_id", "dlc", "data", "extended"]
 MAX_LIVE_ROWS = 5000        # live table keeps only the newest rows
+MAX_ALERT_ROWS = 5000       # alert table keeps only the newest rows
 
 NORMAL_VALUES = ("", "0", "normal", "benign", "none", "r", "false")
 SUSPICIOUS_VALUES = ("suspicious", "warning", "warn")
@@ -121,15 +122,24 @@ class CsvTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def add_frame(self, row):
-        n = len(self.rows)
-        self.beginInsertRows(QModelIndex(), n, n)
-        self.rows.append(row)
-        self.endInsertRows()
-        self.total += 1
-        if len(self.rows) > MAX_LIVE_ROWS:
-            self.beginRemoveRows(QModelIndex(), 0, 0)
-            del self.rows[0]
+        self.add_frames([row])
+
+    def add_frames(self, rows):
+        if not rows:
+            return
+
+        self.total += len(rows)
+        rows = rows[-MAX_LIVE_ROWS:]
+        excess = max(0, len(self.rows) + len(rows) - MAX_LIVE_ROWS)
+        if excess:
+            self.beginRemoveRows(QModelIndex(), 0, excess - 1)
+            del self.rows[:excess]
             self.endRemoveRows()
+        start = len(self.rows)
+        end = start + len(rows) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self.rows.extend(rows)
+        self.endInsertRows()
 
 
 class AlertTableModel(QAbstractTableModel):
@@ -138,6 +148,8 @@ class AlertTableModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
         self.rows = []
+        self.total = 0
+        self.highest_score = None
 
     def rowCount(self, parent=None):
         return len(self.rows)
@@ -162,14 +174,38 @@ class AlertTableModel(QAbstractTableModel):
         return None
 
     def add(self, values):
-        n = len(self.rows)
-        self.beginInsertRows(QModelIndex(), n, n)
-        self.rows.append([str(v) for v in values])
+        self.add_many([values])
+
+    def add_many(self, values):
+        rows = [[str(value) for value in row] for row in values]
+        if not rows:
+            return
+        self.total += len(rows)
+        for row in rows:
+            try:
+                score = float(row[3])
+            except (TypeError, ValueError):
+                continue
+            if self.highest_score is None or score > self.highest_score:
+                self.highest_score = score
+
+        rows = rows[-MAX_ALERT_ROWS:]
+        excess = max(0, len(self.rows) + len(rows) - MAX_ALERT_ROWS)
+        if excess:
+            self.beginRemoveRows(QModelIndex(), 0, excess - 1)
+            del self.rows[:excess]
+            self.endRemoveRows()
+        start = len(self.rows)
+        end = start + len(rows) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self.rows.extend(rows)
         self.endInsertRows()
 
     def clear(self):
         self.beginResetModel()
         self.rows = []
+        self.total = 0
+        self.highest_score = None
         self.endResetModel()
 
 
@@ -205,6 +241,9 @@ class Dashboard(QMainWindow):
         self.btn_live = QPushButton("Start live")
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_detect = QPushButton("Detector: Off")
+        self.btn_detect.setToolTip(
+            "Click to learn normal traffic, then click again to enable alerts."
+        )
         self.btn_detect.clicked.connect(self.toggle_detector)
         self.btn_save_live = QPushButton("Save live CSV (0)")
         self.btn_save_live.setEnabled(False)
@@ -313,7 +352,7 @@ class Dashboard(QMainWindow):
         rl.setSpacing(8)
         rl.addWidget(self.id_monitor, 2)
         rl.addWidget(alerts_box, 3)
-        rl.addWidget(chart_box, 2)
+        rl.addWidget(chart_box, 3)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(frames_box)
@@ -375,19 +414,14 @@ class Dashboard(QMainWindow):
     def update_counters(self):
         c = get_colors(self.dark)
         rows = self.alert_model.rows
-        n_alerts = len(rows)
+        n_alerts = self.alert_model.total
 
         self.card_frames.set_value(self.frame_model.total)
         self.card_alerts.set_value(n_alerts)
         self.card_type.set_value(rows[-1][2] if rows else "None")
 
-        scores = []
-        for r in rows:
-            try:
-                scores.append(float(r[3]))
-            except ValueError:
-                pass
-        self.card_score.set_value(f"{max(scores):.2f}" if scores else "-")
+        score = self.alert_model.highest_score
+        self.card_score.set_value(f"{score:.2f}" if score is not None else "-")
 
         if n_alerts:
             self.status_pill.set_state("ALERTS FOUND", c["danger"])
@@ -422,11 +456,19 @@ class Dashboard(QMainWindow):
         try:
             self.frame_model.load_csv(path)
             self.id_monitor.load_rows(self.frame_model.rows, self.frame_model.header)
+            self.select_latest_visible_frame()
             self.status.setText(f"{path}  |  {self.frame_model.rowCount()} frames")
         except Exception as e:
             self.status.setText(f"Could not load file: {e}")
         self.update_counters()
         self.update_filter_label()
+
+    def select_latest_visible_frame(self):
+        if self.frame_view.currentIndex().isValid():
+            return
+        last_visible_row = self.frame_proxy.rowCount() - 1
+        if last_visible_row >= 0:
+            self.frame_view.setCurrentIndex(self.frame_proxy.index(last_visible_row, 0))
 
     # ---------- live mode (vcan0 bridge) ----------
     def toggle_live(self):
@@ -436,6 +478,7 @@ class Dashboard(QMainWindow):
             self.stop_live()
 
     def start_live(self):
+        self.filter_edit.clear()
         self.frame_model.start_live()
         self.id_monitor.reset()
         self.recorder.clear()
@@ -445,8 +488,7 @@ class Dashboard(QMainWindow):
         self.card_frames.set_value(0)
         self.id_chart.reset_counts()
         self.client = BridgeClient()
-        self.client.frame_received.connect(self.on_live_frame)
-        self.client.alert_received.connect(self.on_alert)
+        self.client.messages_received.connect(self.on_live_messages)
         self.client.status_changed.connect(self.on_bridge_status)
         self.client.start()
         self.btn_live.setText("Stop live")
@@ -463,41 +505,61 @@ class Dashboard(QMainWindow):
         self.status.setText(f"Live: {text}")
 
     def on_live_frame(self, f):
-        self.recorder.add(f)
-        self.btn_save_live.setText(f"Save live CSV ({len(self.recorder)})")
-        self.btn_save_live.setEnabled(bool(len(self.recorder)))
-        row = [
-            f"{float(f.get('timestamp', 0)):.3f}",
-            str(f.get("can_id", "")),
-            str(f.get("dlc", "")),
-            str(f.get("data", "")),
-            str(f.get("extended", "")),
-        ]
-        self.frame_model.add_frame(row)
-        self.id_monitor.record_frame(f)
-        self.frame_view.scrollToBottom()
-        self.card_frames.set_value(self.frame_model.total)
-        self.rate_chart.record()
-        self.update_filter_label()
-        self.id_chart.add(row[1])
-        for kind, score in self.detector.check(f):
-            self.add_alert(
-                time.strftime("%H:%M:%S"),
-                f.get("can_id", ""),
-                kind,
-                score,
-            )
-        
+        self.on_live_messages([f])
+
+    def on_live_messages(self, messages):
+        frames = []
+        rows = []
+        live_alerts = []
+
+        for message in messages:
+            if message.get("type") == "alert":
+                timestamp = time.strftime(
+                    "%H:%M:%S", time.localtime(float(message["timestamp"]))
+                )
+                live_alerts.append((
+                    timestamp,
+                    message["can_id_hex"],
+                    "interval anomaly",
+                    float(message["score"]),
+                ))
+                continue
+
+            frame = message
+            frames.append(frame)
+            self.recorder.add(frame)
+            row = [
+                f"{float(frame.get('timestamp', 0)):.3f}",
+                str(frame.get("can_id", "")),
+                str(frame.get("dlc", "")),
+                str(frame.get("data", "")),
+                str(frame.get("extended", "")),
+            ]
+            rows.append(row)
+            self.id_chart.add(row[1])
+            for kind, score in self.detector.check(frame):
+                live_alerts.append((
+                    time.strftime("%H:%M:%S"),
+                    frame.get("can_id", ""),
+                    kind,
+                    score,
+                ))
+
+        if rows:
+            self.frame_model.add_frames(rows)
+            self.id_monitor.record_frames(frames)
+            self.select_latest_visible_frame()
+            self.frame_view.scrollToBottom()
+            self.card_frames.set_value(self.frame_model.total)
+            self.rate_chart.record(len(rows))
+            self.update_filter_label()
+            self.btn_save_live.setText(f"Save live CSV ({len(self.recorder)})")
+            self.btn_save_live.setEnabled(bool(len(self.recorder)))
+
+        self.add_alerts(live_alerts)
+
     def on_alert(self, msg):
-        timestamp = time.strftime(
-            "%H:%M:%S", time.localtime(float(msg["timestamp"]))
-        )
-        self.add_alert(
-            timestamp,
-            msg["can_id_hex"],
-            "interval anomaly",
-            float(msg["score"]),
-        )
+        self.on_live_messages([msg])
 
     def feed_rate_chart(self):
         """Tell the message rate chart that one frame arrived."""
@@ -582,8 +644,12 @@ class Dashboard(QMainWindow):
     # ---------- alert panel ----------
     def add_alert(self, when, can_id, attack_type, score, refresh=True):
         """The detector (Day 7) calls this once for every alert it finds."""
-        self.alert_model.add((when, can_id, attack_type, score))
-        if refresh:
+        self.add_alerts([(when, can_id, attack_type, score)], refresh=refresh)
+
+    def add_alerts(self, alerts, refresh=True):
+        alerts = list(alerts)
+        self.alert_model.add_many(alerts)
+        if refresh and alerts:
             self.alert_view.scrollToBottom()
             self.update_counters()
 
@@ -650,13 +716,14 @@ class Dashboard(QMainWindow):
         )
 
     def add_test_alert(self):
-        """For testing only. Remove when the real detector is connected."""
+        """Add one UI-only sample for each supported alert category."""
         kinds = ["injection", "unknown ID", "payload tampering", "missing message"]
-        self.add_alert(time.strftime("%H:%M:%S"),
-                       hex(random.randint(0x100, 0x7FF)),
-                       random.choice(kinds),
-                       round(random.uniform(0.6, 1.0), 2))
-                       
+        can_ids = random.sample(range(0x100, 0x800), len(kinds))
+        now = time.strftime("%H:%M:%S")
+        self.add_alerts([
+            (now, hex(can_id), kind, round(random.uniform(0.6, 1.0), 2))
+            for kind, can_id in zip(kinds, can_ids)
+        ])
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import dataclasses
 import json
 import os
@@ -46,7 +47,6 @@ WINDOW_COLUMNS = ["dataset", "attack_type", "start_s", "end_s", "start_timestamp
 
 def write_attack_windows(path: str, rows: list) -> None:
     """Ground-truth attack windows (needed to evaluate missing_message, which has no attack rows)."""
-    import csv
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(WINDOW_COLUMNS)
@@ -112,6 +112,17 @@ def generate_all(config_path: str, output_dir: str, duration: float, seed: int) 
         with open(metadata_path, "w", encoding="utf-8") as metadata_file:
             json.dump(metadata, metadata_file, indent=4)
 
+        for event in events:
+            window_rows.append([
+                filename,
+                event.attack_type,
+                f"{event.start_time:.3f}",
+                f"{event.end_time:.3f}",
+                f"{DRY_RUN_EPOCH + event.start_time:.6f}",
+                f"{DRY_RUN_EPOCH + event.end_time:.6f}",
+                format_can_id(event.target_id),
+            ])
+
         print(f"-> Generating {filename:<32} [{description}]...")
 
         stop = threading.Event()
@@ -135,11 +146,12 @@ def generate_all(config_path: str, output_dir: str, duration: float, seed: int) 
             )
         if supp_sink:
             supp_sink.close()
-        for ev in events:
-            window_rows.append([filename, ev.attack_type, f"{ev.start_time:.3f}", f"{ev.end_time:.3f}",
-                                f"{DRY_RUN_EPOCH + ev.start_time:.6f}", f"{DRY_RUN_EPOCH + ev.end_time:.6f}",
-                                format_can_id(ev.target_id)])
-        print(f"   Done: {stats.generated} frames (Normal={stats.normal_count}, Attack={stats.attack_count}, Suppressed={stats.suppressed})")
+        print(
+            f"   Done: {stats.generated} frames "
+            f"(Normal={stats.normal_count}, "
+            f"Attack={stats.attack_count}, "
+            f"Suppressed={stats.suppressed})"
+        )
 
     write_attack_windows(os.path.join(output_dir, "attack_windows.csv"), window_rows)
     print("\n[SUCCESS] All datasets generated successfully!")

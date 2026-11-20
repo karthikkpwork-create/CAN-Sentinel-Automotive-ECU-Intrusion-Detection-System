@@ -24,7 +24,7 @@ Input schema
 
 Output schema (DataFrame returned by ``detect_csv``; one row per window)
 -----------------------------------------------------------------------
-* ``window_start_s``  window start, seconds (same clock as the input CSV)
+* ``window_start_s``  elapsed window start in seconds from the first valid frame
 * ``status``          ``"normal"`` or ``"anomalous"``
 * ``prediction``      scikit-learn label: ``1`` = inlier, ``-1`` = outlier
 * ``anomaly_score``   ``decision_function`` value; LOWER = more anomalous
@@ -140,7 +140,7 @@ def normalize_can_id(text: str) -> str:
 
 
 def window_key(timestamp: float, window_seconds: float) -> float:
-    """Window start for a timestamp, same anchoring as the feature extractor."""
+    """Window start for an elapsed timestamp, matching the feature extractor."""
     return round(math.floor(timestamp / window_seconds) * window_seconds, 6)
 
 
@@ -157,9 +157,29 @@ def _read_columns(path: Path):
     return handle, reader, ts_col, id_col
 
 
+def _first_valid_timestamp(path: Path) -> float:
+    """Return the extractor's time origin: the earliest valid frame timestamp."""
+    handle, reader, ts_col, id_col = _read_columns(path)
+    origin = None
+    with handle:
+        for row in reader:
+            try:
+                timestamp = float(row[ts_col])
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(timestamp) or not (row.get(id_col) or "").strip():
+                continue
+            if origin is None or timestamp < origin:
+                origin = timestamp
+    if origin is None:
+        raise DetectorError(f"{path}: no rows with valid timestamps and CAN IDs")
+    return origin
+
+
 def per_window_id_counts(csv_path, window_seconds: float) -> Dict[float, Counter]:
     """Frame count per CAN ID inside each window (invalid rows are skipped)."""
     path = Path(csv_path)
+    origin = _first_valid_timestamp(path)
     handle, reader, ts_col, id_col = _read_columns(path)
     counts: Dict[float, Counter] = defaultdict(Counter)
     skipped = 0
@@ -174,7 +194,7 @@ def per_window_id_counts(csv_path, window_seconds: float) -> Dict[float, Counter
             if not math.isfinite(ts):
                 skipped += 1
                 continue
-            counts[window_key(ts, window_seconds)][can_id] += 1
+            counts[window_key(ts - origin, window_seconds)][can_id] += 1
     if skipped:
         LOG.warning("%s: %d rows skipped when counting frames per ID", path, skipped)
     return counts
@@ -407,25 +427,27 @@ def detect_csv(csv_path, bundle: ModelBundle, threshold: Optional[float] = None)
 def summarize_against_labels(results: pd.DataFrame, csv_path, window_seconds: float) -> Dict[str, float]:
     """Sanity check only: a window counts as attack if any frame in it is labelled attack."""
     path = Path(csv_path)
-    handle, reader, ts_col, _ = _read_columns(path)
-    attack_windows: set = set()
+    handle, reader, _, _ = _read_columns(path)
     seen_label = False
     with handle:
         names = reader.fieldnames or []
         if "label" not in names and "attack_type" not in names:
             raise DetectorError(f"{path} has no 'label' or 'attack_type' column")
         for row in reader:
-            try:
-                ts = float(row[ts_col])
-            except (TypeError, ValueError):
-                continue
             label = (row.get("label") or "").strip()
             kind = (row.get("attack_type") or "").strip().lower()
             seen_label = seen_label or bool(label or kind)
-            if label not in ("", "0") or kind not in ("", "normal"):
-                attack_windows.add(window_key(ts, window_seconds))
-    if not seen_label:
+    metadata_path = path.with_suffix(".events.json")
+    if not seen_label and not metadata_path.is_file():
         raise DetectorError(f"{path}: label columns are empty")
+    features = compute_features(path, window_seconds)
+    if "label" not in features.columns:
+        raise DetectorError(f"{path}: feature extractor did not produce labels")
+    attack_windows = {
+        round(float(row[WINDOW_COLUMN]), 6)
+        for _, row in features.iterrows()
+        if int(row["label"]) == 1
+    }
     tp = fn = fp = tn = 0
     for _, row in results.iterrows():
         is_attack = round(float(row[WINDOW_COLUMN]), 6) in attack_windows
